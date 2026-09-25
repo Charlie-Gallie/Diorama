@@ -1,0 +1,13 @@
+# Build output
+/out/
+
+# FetchContent downloads, if FETCHCONTENT_BASE_DIR is moved out of the build tree
+/.deps/
+
+# Visual Studio per-user state
+/.vs/
+*.user
+
+# Per-user CMake and debugger settings
+CMakeUserPresets.json
+launch.vs.json

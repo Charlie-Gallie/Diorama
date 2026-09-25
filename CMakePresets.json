@@ -1,0 +1,13 @@
+{
+	"version": 6,
+	"configurePresets": [
+		{
+			"name": "windows-x64",
+			"generator": "Ninja Multi-Config",
+			"binaryDir": "${sourceDir}/out/build/${presetName}",
+			"architecture": { "value": "x64", "strategy": "external" },
+			"toolset": { "value": "host=x64", "strategy": "external" },
+			"displayName": "Windows x64 (Ninja Multi-Config)"
+		}
+	]
+}
