@@ -16,7 +16,8 @@ namespace solar
 		Error Initialize(
 			SDL_GPUDevice* in_gpuDevice,
 			SDL_Window* in_sdlWindow,
-			SDL_GPUTextureFormat in_gpuTexFormat
+			SDL_GPUTextureFormat in_gpuTexFormat,
+			SDL_GPUPresentMode in_presentMode
 		);
 
 		void NewFrame();

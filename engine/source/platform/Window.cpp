@@ -52,11 +52,15 @@ namespace solar
 
 		if (handle == nullptr)
 		{
-			LogError(SDL_GetError());
+			SOLAR_LOG_FATAL(
+				PLATFORM,
+				"Couldn't create SDL window: {}", SDL_GetError()
+			);
 
 			return solar::Error::PLATFORM_FAILURE;
 		}
 
+		SOLAR_LOG_INFO(PLATFORM, "Constructed window");
 		return Error::NONE;
 	}
 }

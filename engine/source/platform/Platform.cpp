@@ -26,13 +26,17 @@ namespace solar
 
 		if (sdlInitialized == false)
 		{
-			LogError(SDL_GetError());
+			SOLAR_LOG_FATAL(
+				PLATFORM,
+				"Couldn't initialize SDL: {}", SDL_GetError()
+			);
 
 			return Error::PLATFORM_FAILURE;
 		}
 
 		isInitialized = true;
 
+		SOLAR_LOG_INFO(PLATFORM, "Initialized platform");
 		return Error::NONE;
 	}
 }

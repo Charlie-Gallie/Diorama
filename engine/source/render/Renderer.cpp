@@ -1,5 +1,6 @@
 #include "solar/render/Renderer.hpp"
 
+#include "CameraData.hpp"
 #include "ImGuiLayer.hpp"
 #include "solar/core/Log.hpp"
 #include "solar/platform/Window.hpp"
@@ -7,7 +8,6 @@
 
 #include <SDL3/SDL.h>
 
-#include <chrono>
 #include <string>
 
 namespace solar
@@ -23,13 +23,16 @@ namespace solar
 		constexpr bool enableGpuDebug = true;
 #endif
 
-		SDL_GPUShader* LoadShader(SDL_GPUDevice* in_gpuDevice, const char* in_path, SDL_GPUShaderStage in_shaderStage)
+		SDL_GPUShader* LoadShader(SDL_GPUDevice* in_gpuDevice, const char* in_path, SDL_GPUShaderStage in_shaderStage, Uint32 in_numUniformBuffers)
 		{
-			Filesystem::Buffer buffer;
+			filesystem::Buffer buffer;
 			
-			if (Filesystem::ReadFile(in_path, buffer) != Error::NONE)
+			if (filesystem::ReadFile(in_path, buffer) != Error::NONE)
 			{
-				LogError(SDL_GetError());
+				SOLAR_LOG_ERR(
+					RENDER,
+					"Failed to load shader file \"{}\": {}", in_path, SDL_GetError()
+				);
 				return nullptr;
 			}
 
@@ -40,12 +43,15 @@ namespace solar
 			info.format = SDL_GPU_SHADERFORMAT_SPIRV;
 			info.stage = in_shaderStage;
 			info.num_samplers = 0;
-			info.num_uniform_buffers = 0;
+			info.num_uniform_buffers = in_numUniformBuffers;
 
 			SDL_GPUShader* gpuShader = SDL_CreateGPUShader(in_gpuDevice, &info);
 			if (gpuShader == NULL)
 			{
-				LogError(SDL_GetError());
+				SOLAR_LOG_ERR(
+					RENDER,
+					"Failed to create GPU shader: {}", SDL_GetError()
+				);
 				return nullptr;
 			}
 
@@ -92,22 +98,43 @@ namespace solar
 
 		if (gpuDevice == nullptr)
 		{
-			LogError(SDL_GetError());
+			SOLAR_LOG_ERR(
+				RENDER,
+				"Failed to create GPU device: {}", SDL_GetError()
+			);
 			return Error::RENDERER_FAILURE;
 		}
 
 		if (SDL_ClaimWindowForGPUDevice(gpuDevice, sdlWindow) == false)
 		{
-			LogError(SDL_GetError());
+			SOLAR_LOG_ERR(
+				RENDER,
+				"Failed to claim window for GPU device: {}", SDL_GetError()
+			);
 			return Error::RENDERER_FAILURE;
 		}
 
 		isClaimed = true;
 
+		SDL_GPUPresentMode presentMode = PickPresentMode();
+
+		if (SDL_SetGPUSwapchainParameters(
+			gpuDevice,
+			sdlWindow,
+			SDL_GPU_SWAPCHAINCOMPOSITION_SDR,
+			presentMode
+		) == false)
+		{
+			SOLAR_LOG_ERR(
+				RENDER,
+				"Failed to set swapchain parameters: {}", SDL_GetError()
+			);
+		}
+
 		const SDL_GPUTextureFormat swapchainFormat = SDL_GetGPUSwapchainTextureFormat(gpuDevice, sdlWindow);
 
 		imGuiLayer = new ImGuiLayer();
-		if (imGuiLayer->Initialize(gpuDevice, sdlWindow, swapchainFormat) != Error::NONE)
+		if (imGuiLayer->Initialize(gpuDevice, sdlWindow, swapchainFormat, presentMode) != Error::NONE)
 		{
 			return Error::RENDERER_FAILURE;
 		}
@@ -115,7 +142,8 @@ namespace solar
 		SDL_GPUShader* vertShader = LoadShader(
 			gpuDevice,
 			"shaders/Fullscreen.vert.spv",
-			SDL_GPU_SHADERSTAGE_VERTEX
+			SDL_GPU_SHADERSTAGE_VERTEX,
+			0
 		);
 
 		if (vertShader == nullptr)
@@ -126,7 +154,8 @@ namespace solar
 		SDL_GPUShader* fragShader = LoadShader(
 			gpuDevice,
 			"shaders/Fullscreen.frag.spv",
-			SDL_GPU_SHADERSTAGE_FRAGMENT
+			SDL_GPU_SHADERSTAGE_FRAGMENT,
+			1
 		);
 
 		if (fragShader == nullptr)
@@ -157,50 +186,46 @@ namespace solar
 
 		if (graphicsPipeline == nullptr)
 		{
-			LogError(SDL_GetError());
+			SOLAR_LOG_ERR(
+				RENDER,
+				"Failed to create graphics pipeline: {}", SDL_GetError()
+			);
 			return Error::RENDERER_FAILURE;
 		}
 
-		if (SDL_WindowSupportsGPUPresentMode(gpuDevice, sdlWindow, SDL_GPU_PRESENTMODE_IMMEDIATE))
-		{
-			SDL_SetGPUSwapchainParameters(
-				gpuDevice,
-				sdlWindow,
-				SDL_GPU_SWAPCHAINCOMPOSITION_SDR,
-				SDL_GPU_PRESENTMODE_IMMEDIATE
-			);
-		}
-		else
-		{
-			LogError("Immediate present mode not supported");
-		}
-
+		SOLAR_LOG_INFO(RENDER, "Initialized renderer");
 		return Error::NONE;
 	}
 
-	void Renderer::Render()
+	void Renderer::Render(const Camera& in_camera)
 	{
-		auto frameStartTime = std::chrono::steady_clock::now();
-
 		SDL_GPUCommandBuffer* commandBuffer = SDL_AcquireGPUCommandBuffer(gpuDevice);
 
 		if (commandBuffer == nullptr)
 		{
-			LogError(SDL_GetError());
+			SOLAR_LOG_ERR(
+				RENDER,
+				"Failed to acquire GPU command buffer: {}", SDL_GetError()
+			);
 			return;
 		}
 
 		SDL_GPUTexture* swapchainTexture = nullptr;
+		Uint32 swapchainWidth = 0;
+		Uint32 swapchainHeight = 0;
 
 		if (SDL_WaitAndAcquireGPUSwapchainTexture(
 				commandBuffer,
 				sdlWindow,
 				&swapchainTexture,
-				nullptr,
-				nullptr
+				&swapchainWidth,
+				&swapchainHeight
 			) == false
 		) {
-			LogError(SDL_GetError());
+			SOLAR_LOG_ERR(
+				RENDER,
+				"Failed to acquire swapchain texture: {}", SDL_GetError()
+			);
 
 			// The command buffer has been acquired, so it must be disposed of either
 			// way or it leaks.
@@ -229,17 +254,65 @@ namespace solar
 
 		SDL_GPURenderPass* renderPass = SDL_BeginGPURenderPass(commandBuffer, &target, 1, nullptr);
 
+		// Aspect comes from the swapchain rather than the window, so it stays
+		// correct through a resize without a separate resize notification.
+		const float aspect = swapchainHeight > 0
+			? static_cast<float>(swapchainWidth) / static_cast<float>(swapchainHeight)
+			: 1.0f;
+
+		const CameraData cameraData = MakeCameraData(in_camera, aspect);
+
+		SDL_PushGPUFragmentUniformData(commandBuffer, 0, &cameraData, sizeof(cameraData));
+
 		SDL_BindGPUGraphicsPipeline(renderPass, graphicsPipeline);
 		SDL_DrawGPUPrimitives(renderPass, 3, 1, 0, 0);
 
 		imGuiLayer->Draw(commandBuffer, renderPass);
 
-		auto frameEndTime = std::chrono::steady_clock::now();
-		std::chrono::nanoseconds frameTimeNs = frameEndTime - frameStartTime;
-		float frameTimeMs = frameTimeNs / std::chrono::milliseconds(1);
-		//SDL_SetWindowTitle(sdlWindow, std::to_string(frameTimeMs).c_str());
-
 		SDL_EndGPURenderPass(renderPass);
 		SDL_SubmitGPUCommandBuffer(commandBuffer);
+	}
+
+	// TODO: This will need to change/be ripped out
+	// 
+	// The default should not be picked by this arbitrary order, and this isn't
+	// even the place setting the present mode, so the output is a preemptive
+	// claim which might not be true
+	SDL_GPUPresentMode Renderer::PickPresentMode()
+	{
+		bool supportsVsync = SDL_WindowSupportsGPUPresentMode(gpuDevice, sdlWindow, SDL_GPU_PRESENTMODE_VSYNC);
+		bool supportsImmediate = SDL_WindowSupportsGPUPresentMode(gpuDevice, sdlWindow, SDL_GPU_PRESENTMODE_IMMEDIATE);
+		bool supportsMailbox = SDL_WindowSupportsGPUPresentMode(gpuDevice, sdlWindow, SDL_GPU_PRESENTMODE_MAILBOX);
+
+		SOLAR_LOG_INFO(
+			RENDER,
+			"Supported GPU Present Modes:"
+			"\n\t{}: {}"
+			"\n\t{}: {}"
+			"\n\t{}: {}",
+			"Mailbox", supportsMailbox,
+			"Immediate", supportsImmediate,
+			"VSync", supportsVsync
+		);
+
+		SDL_GPUPresentMode presentMode = SDL_GPU_PRESENTMODE_VSYNC;
+
+		if (supportsMailbox)
+		{
+			presentMode = SDL_GPU_PRESENTMODE_MAILBOX;
+			SOLAR_LOG_INFO(RENDER, "Using Mailbox");
+		}
+		else if (supportsImmediate)
+		{
+			presentMode = SDL_GPU_PRESENTMODE_IMMEDIATE;
+			SOLAR_LOG_INFO(RENDER, "Using Immediate (might get screen tearing)");
+		}
+		else
+		{
+			presentMode = SDL_GPU_PRESENTMODE_VSYNC;
+			SOLAR_LOG_INFO(RENDER, "Using Vsync");
+		}
+
+		return presentMode;
 	}
 }

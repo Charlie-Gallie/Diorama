@@ -14,5 +14,5 @@ int main()
 	config.debugUi = solar::devtools::DrawAll;
 #endif
 
-	return solar::Engine::Run(config);
+	return solar::Run(config);
 }

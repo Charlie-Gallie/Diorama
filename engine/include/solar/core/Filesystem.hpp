@@ -7,7 +7,7 @@
 #include "solar/core/Log.hpp"
 
 namespace solar {
-namespace Filesystem {
+namespace filesystem {
 	struct Buffer;
 
 	// The contents of the buffer will be freed (if required)

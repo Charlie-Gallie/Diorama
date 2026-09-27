@@ -1,6 +1,7 @@
 add_library(solar_devtools STATIC
 	"source/DevTools.cpp"
- "source/Performance.cpp")
+	"source/Performance.cpp"
+)
 add_library(solar::devtools ALIAS solar_devtools)
 
 target_include_directories(solar_devtools PUBLIC include)

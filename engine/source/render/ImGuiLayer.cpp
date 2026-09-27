@@ -4,6 +4,8 @@
 #include "backends/imgui_impl_sdl3.h"
 #include "backends/imgui_impl_sdlgpu3.h"
 
+#include "solar/core/Log.hpp"
+
 namespace solar
 {
 	ImGuiLayer::~ImGuiLayer()
@@ -24,7 +26,8 @@ namespace solar
 	Error ImGuiLayer::Initialize(
 		SDL_GPUDevice* in_gpuDevice,
 		SDL_Window* in_sdlWindow,
-		SDL_GPUTextureFormat in_gpuTexFormat
+		SDL_GPUTextureFormat in_gpuTexFormat,
+		SDL_GPUPresentMode in_presentMode
 	) {
 		sdlWindow = in_sdlWindow;
 
@@ -32,16 +35,30 @@ namespace solar
 
 		context = ImGui::CreateContext();
 		ImGui::StyleColorsDark();
-		ImGui_ImplSDL3_InitForSDLGPU(sdlWindow);
+		if (ImGui_ImplSDL3_InitForSDLGPU(sdlWindow) == false)
+		{
+			SOLAR_LOG_ERR(
+				RENDER,
+				"Failed ImGui_ImplSDL3_InitForSDLGPU(...)"
+			);
+			return Error::RENDERER_FAILURE;
+		}
 
 		ImGui_ImplSDLGPU3_InitInfo info{};
 		info.ColorTargetFormat = in_gpuTexFormat;
 		info.Device = in_gpuDevice;
 		info.MSAASamples = SDL_GPU_SAMPLECOUNT_1;
-		info.PresentMode = SDL_GPU_PRESENTMODE_MAILBOX; // TODO: Apparently mailbox or immediate may not always be supported
 		info.SwapchainComposition = SDL_GPU_SWAPCHAINCOMPOSITION_SDR;
+		info.PresentMode = in_presentMode;
 
-		ImGui_ImplSDLGPU3_Init(&info); // TODO: Need to check the result? Seems to always be true
+		if (ImGui_ImplSDLGPU3_Init(&info) == false)
+		{
+			SOLAR_LOG_ERR(
+				RENDER,
+				"Failed ImGui_ImplSDLGPU3_Init(...)"
+			);
+			return Error::RENDERER_FAILURE;
+		}
 
 		return Error::NONE;
 	}

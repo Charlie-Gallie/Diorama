@@ -51,10 +51,16 @@ FetchContent_Declare(spdlog
     GIT_SHALLOW    TRUE
     SYSTEM EXCLUDE_FROM_ALL)
 
+FetchContent_Declare(glm
+    GIT_REPOSITORY https://github.com/g-truc/glm.git
+    GIT_TAG        1.0.3
+    GIT_SHALLOW    TRUE
+    SYSTEM EXCLUDE_FROM_ALL)
+
 # Use std::format (C++20) instead of the bundled fmt.
 set(SPDLOG_USE_STD_FORMAT ON CACHE BOOL "" FORCE)
 
-FetchContent_MakeAvailable(SDL3 imgui spdlog)
+FetchContent_MakeAvailable(SDL3 imgui spdlog glm)
 
 add_library(imgui STATIC
     "${imgui_SOURCE_DIR}/imgui.cpp"
@@ -78,6 +84,22 @@ target_link_libraries(imgui PUBLIC SDL3::SDL3)
 
 set_target_properties(imgui PROPERTIES FOLDER "ThirdParty")
 set_target_properties(spdlog PROPERTIES FOLDER "ThirdParty")
+
+# --- Feature flags ----
+# Carried on an interface target and linked PUBLIC through the engine, so every target agrees.
+# Defined as 1/0 rather than defined/undefined
+# a misspelling in an #if is then a warning rather just being off
+add_library(solar_flags INTERFACE)
+add_library(solar::flags ALIAS solar_flags)
+
+target_compile_definitions(solar_flags INTERFACE
+    SOLAR_SHIPPING=$<IF:$<CONFIG:Shipping>,1,0>
+
+    # __FILE__ must not reach a shipped binary, and trace arguments should not
+    # even be evaluated there.
+    SOLAR_LOG_LOCATION_ENABLED=$<IF:$<CONFIG:Shipping>,0,1>
+    SOLAR_LOG_TRACE_ENABLED=$<IF:$<CONFIG:Shipping>,0,1>
+)
 
 add_subdirectory(engine)
 add_subdirectory(devtools)

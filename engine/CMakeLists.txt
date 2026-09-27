@@ -7,10 +7,17 @@ add_library(solar_engine STATIC
 	"source/core/Log.cpp"
 	"source/render/Renderer.cpp"
 	"source/core/Filesystem.cpp"
- "source/render/ImGuiLayer.cpp")
+	"source/render/ImGuiLayer.cpp"
+)
 add_library(solar::engine ALIAS solar_engine)
 
 target_include_directories(solar_engine PUBLIC include)
+
+# PUBLIC: feature flags must be identical in every target that links the engine
+target_link_libraries(solar_engine PUBLIC solar::flags)
+
+# PUBLIC: glm types appear in public headers (solar/core/Math.hpp)
+target_link_libraries(solar_engine PUBLIC glm::glm)
 
 target_link_libraries(solar_engine PRIVATE SDL3::SDL3) # Keep SDL out of public headers
 target_link_libraries(solar_engine PRIVATE imgui) # Also keep out of public headers

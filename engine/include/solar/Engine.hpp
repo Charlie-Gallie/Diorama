@@ -14,12 +14,5 @@ namespace solar
 		DebugUiCallback debugUi = nullptr;
 	};
 
-	class Engine
-	{
-	public:
-		static int Run(const EngineConfig& in_config);
-	private:
-	};
-
-
+	int Run(const EngineConfig& in_config);
 }

@@ -1,9 +1,11 @@
 #include "solar/Engine.hpp"
 
 #include "platform/Platform.hpp"
+#include "solar/core/Log.hpp"
 #include "solar/core/DebugUiHook.hpp"
 #include "solar/platform/Events.hpp"
 #include "solar/platform/Window.hpp"
+#include "solar/render/Camera.hpp"
 #include "solar/render/Renderer.hpp"
 
 #include <chrono>
@@ -22,11 +24,27 @@ namespace solar
 		constexpr double maxFrameTime = 0.25;
 	}
 
-	int Engine::Run(const EngineConfig& in_config)
+	namespace
 	{
+		// RAII so the early failure returns below cannot skip Shutdown.
+		struct LogScope
+		{
+			LogScope() { log::Initialize(); }
+			~LogScope() { log::Shutdown(); }
+
+			LogScope(const LogScope&) = delete;
+			LogScope& operator=(const LogScope&) = delete;
+		};
+	}
+
+	int Run(const EngineConfig& in_config)
+	{
+		LogScope logScope;
+
 		Platform platform;
 		if (platform.Initialize(Platform::Subsystem::VIDEO) != Error::NONE)
 		{
+			SOLAR_LOG_FATAL(PLATFORM, "Failed to initialize platform");
 			return 1;
 		}
 
@@ -37,14 +55,19 @@ namespace solar
 			in_config.windowHeight
 		) != Error::NONE
 		) {
+			SOLAR_LOG_FATAL(PLATFORM, "Failed to initialize window");
 			return 1;
 		}
 
 		Renderer renderer;
 		if (renderer.Initialize(window, in_config.debugUi) != Error::NONE)
 		{
+			SOLAR_LOG_FATAL(RENDER, "Failed to initialize renderer");
 			return 1;
 		}
+
+		// TODO: belongs to the client
+		Camera camera;
 
 		// steady_clock, not system_clock: the latter can jump when the OS syncs time.
 		auto previousTime = std::chrono::steady_clock::now();
@@ -74,7 +97,7 @@ namespace solar
 
 			// TODO: pass accumulator / fixedDeltaTime as the interpolation alpha once
 			// there is anything with a previous and current transform to blend.
-			renderer.Render();
+			renderer.Render(camera);
 		}
 
 		return 0;

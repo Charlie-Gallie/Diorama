@@ -7,11 +7,13 @@
 struct SDL_Window;
 struct SDL_GPUDevice;
 struct SDL_GPUGraphicsPipeline;
+enum SDL_GPUPresentMode;
 
 namespace solar
 {
 	class Window;
 	class ImGuiLayer;
+	struct Camera;
 
 	class Renderer
 	{
@@ -26,7 +28,7 @@ namespace solar
 
 		[[nodiscard]] Error Initialize(Window& in_window, DebugUiCallback in_debugUiCallback = nullptr);
 
-		void Render();
+		void Render(const Camera& in_camera);
 	private:
 		SDL_Window* sdlWindow = nullptr;
 		SDL_GPUDevice* gpuDevice = nullptr;
@@ -36,5 +38,7 @@ namespace solar
 		// Using a pointer so we can properly handle its lifetime
 		ImGuiLayer* imGuiLayer = nullptr;
 		DebugUiCallback debugUiCallback = nullptr;
+
+		SDL_GPUPresentMode PickPresentMode();
 	};
 }
