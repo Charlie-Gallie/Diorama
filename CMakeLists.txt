@@ -34,7 +34,38 @@ FetchContent_Declare(SDL3
     GIT_TAG        release-3.4.16
     GIT_SHALLOW    TRUE
     SYSTEM EXCLUDE_FROM_ALL)
-FetchContent_MakeAvailable(SDL3)
+
+# Dear ImGui ships no CMakeLists.txt, so MakeAvailable only
+# downloads it and the target below is made ourself
+FetchContent_Declare(imgui
+    GIT_REPOSITORY https://github.com/ocornut/imgui.git
+    GIT_TAG        v1.92.9b
+    GIT_SHALLOW    TRUE
+    SYSTEM EXCLUDE_FROM_ALL)
+
+FetchContent_MakeAvailable(SDL3 imgui)
+
+add_library(imgui STATIC
+    "${imgui_SOURCE_DIR}/imgui.cpp"
+    "${imgui_SOURCE_DIR}/imgui_draw.cpp"
+    "${imgui_SOURCE_DIR}/imgui_tables.cpp"
+    "${imgui_SOURCE_DIR}/imgui_widgets.cpp"
+    "${imgui_SOURCE_DIR}/imgui_demo.cpp"
+    "${imgui_SOURCE_DIR}/backends/imgui_impl_sdl3.cpp"
+    "${imgui_SOURCE_DIR}/backends/imgui_impl_sdlgpu3.cpp"
+)
+
+# SYSTEM so ImGui's own warnings stay out of the build output
+target_include_directories(imgui SYSTEM PUBLIC
+    "${imgui_SOURCE_DIR}"
+    "${imgui_SOURCE_DIR}/backends"
+)
+
+# The ImGui backend headers need SDL
+# This stops at solar_engine (which links imgui privately) so SDL still does not reach engine consumers
+target_link_libraries(imgui PUBLIC SDL3::SDL3)
+
+set_target_properties(imgui PROPERTIES FOLDER "ThirdParty")
 
 add_subdirectory(engine)
 add_subdirectory(apps/client)

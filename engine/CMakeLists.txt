@@ -6,16 +6,18 @@ add_library(solar_engine STATIC
 	"source/platform/Platform.cpp"
 	"source/core/Log.cpp"
 	"source/render/Renderer.cpp"
-)
+	"source/core/Filesystem.cpp"
+ "source/render/ImGuiLayer.cpp")
 add_library(solar::engine ALIAS solar_engine)
 
 target_include_directories(solar_engine PUBLIC include)
 
 target_link_libraries(solar_engine PRIVATE SDL3::SDL3) # Keep SDL out of public headers
+target_link_libraries(solar_engine PRIVATE imgui) # Also keep out of public headers
 
-# --- Shaders -----------------------------------------------------------------
-# HLSL is compiled to SPIR-V at build time by dxc from the Vulkan SDK. The game
-# ships only the bytecode, so no compiler is needed at runtime.
+# --- Shaders ---
+# HLSL is compiled to SPIR-V at build time by dxc from the Vulkan SDK
+# The game ships only the bytecode, so no compiler is needed at runtime.
 
 find_program(DXC_EXECUTABLE dxc
 	HINTS "$ENV{VULKAN_SDK}/Bin"
@@ -39,7 +41,7 @@ function(solar_compile_shader in_source in_profile out_compiled)
 			-T ${in_profile}
 			-E main
 			-spirv
-			-fspv-target-env=vulkan1.3
+			-fspv-target-env=vulkan1.0
 			$<$<NOT:$<CONFIG:Shipping>>:-Zi>
 			-Fo "${compiled}"
 			"${CMAKE_CURRENT_SOURCE_DIR}/${in_source}"

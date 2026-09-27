@@ -6,7 +6,8 @@ namespace solar
 	{
 		NONE = 0,
 		PLATFORM_FAILURE,
-		RENDERER_FAILURE
+		RENDERER_FAILURE,
+		FILESYSTEM_FAILURE
 	};
 
 	const char* ErrorToString(Error in_error);
