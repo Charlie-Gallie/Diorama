@@ -1,5 +1,6 @@
 #pragma once
 
+#include "solar/core/DebugUiHook.hpp"
 #include "solar/core/Error.hpp"
 
 /* Forward declarations */
@@ -23,7 +24,7 @@ namespace solar
 		Renderer(const Renderer&) = delete;
 		Renderer& operator=(const Renderer&) = delete;
 
-		[[nodiscard]] Error Initialize(Window& in_window);
+		[[nodiscard]] Error Initialize(Window& in_window, DebugUiCallback in_debugUiCallback = nullptr);
 
 		void Render();
 	private:
@@ -34,5 +35,6 @@ namespace solar
 
 		// Using a pointer so we can properly handle its lifetime
 		ImGuiLayer* imGuiLayer = nullptr;
+		DebugUiCallback debugUiCallback = nullptr;
 	};
 }

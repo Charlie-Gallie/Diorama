@@ -9,5 +9,25 @@
 			"toolset": { "value": "host=x64", "strategy": "external" },
 			"displayName": "Windows x64 (Ninja Multi-Config)"
 		}
+	],
+	"buildPresets": [
+		{
+			"name": "debug",
+			"displayName": "Debug",
+			"configurePreset": "windows-x64",
+			"configuration": "Debug"
+		},
+		{
+			"name": "development",
+			"displayName": "Development",
+			"configurePreset": "windows-x64",
+			"configuration": "Development"
+		},
+		{
+			"name": "shipping",
+			"displayName": "Shipping",
+			"configurePreset": "windows-x64",
+			"configuration": "Shipping"
+		}
 	]
 }

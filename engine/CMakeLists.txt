@@ -14,6 +14,7 @@ target_include_directories(solar_engine PUBLIC include)
 
 target_link_libraries(solar_engine PRIVATE SDL3::SDL3) # Keep SDL out of public headers
 target_link_libraries(solar_engine PRIVATE imgui) # Also keep out of public headers
+target_link_libraries(solar_engine PRIVATE spdlog::spdlog) # Backend for solar::Log*, never exposed
 
 # --- Shaders ---
 # HLSL is compiled to SPIR-V at build time by dxc from the Vulkan SDK

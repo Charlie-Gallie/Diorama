@@ -26,17 +26,19 @@ namespace solar
 		SDL_Window* in_sdlWindow,
 		SDL_GPUTextureFormat in_gpuTexFormat
 	) {
+		sdlWindow = in_sdlWindow;
+
 		IMGUI_CHECKVERSION();
 
 		context = ImGui::CreateContext();
 		ImGui::StyleColorsDark();
-		ImGui_ImplSDL3_InitForSDLGPU(in_sdlWindow);
+		ImGui_ImplSDL3_InitForSDLGPU(sdlWindow);
 
 		ImGui_ImplSDLGPU3_InitInfo info{};
 		info.ColorTargetFormat = in_gpuTexFormat;
 		info.Device = in_gpuDevice;
 		info.MSAASamples = SDL_GPU_SAMPLECOUNT_1;
-		info.PresentMode = SDL_GPU_PRESENTMODE_IMMEDIATE; // TODO: Apparently IMMEDIATE may not always be supported
+		info.PresentMode = SDL_GPU_PRESENTMODE_MAILBOX; // TODO: Apparently mailbox or immediate may not always be supported
 		info.SwapchainComposition = SDL_GPU_SWAPCHAINCOMPOSITION_SDR;
 
 		ImGui_ImplSDLGPU3_Init(&info); // TODO: Need to check the result? Seems to always be true
@@ -49,6 +51,11 @@ namespace solar
 		ImGui_ImplSDLGPU3_NewFrame();
 		ImGui_ImplSDL3_NewFrame();
 		ImGui::NewFrame();
+
+		ImGuiStyle& style = ImGui::GetStyle();
+
+		float displayScale = SDL_GetWindowDisplayScale(sdlWindow);
+		style.FontScaleDpi = SDL_floorf(displayScale + 0.5f); // Prevent weird font rasterization by using whole number as scale
 	}
 
 	void ImGuiLayer::PrepareDraw(SDL_GPUCommandBuffer* in_gpuCommandBuffer)

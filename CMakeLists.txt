@@ -43,7 +43,18 @@ FetchContent_Declare(imgui
     GIT_SHALLOW    TRUE
     SYSTEM EXCLUDE_FROM_ALL)
 
-FetchContent_MakeAvailable(SDL3 imgui)
+# spdlog is built as a compiled library rather than header-only, so fmt is not
+# pulled into every translation unit that logs.
+FetchContent_Declare(spdlog
+    GIT_REPOSITORY https://github.com/gabime/spdlog.git
+    GIT_TAG        v1.17.0
+    GIT_SHALLOW    TRUE
+    SYSTEM EXCLUDE_FROM_ALL)
+
+# Use std::format (C++20) instead of the bundled fmt.
+set(SPDLOG_USE_STD_FORMAT ON CACHE BOOL "" FORCE)
+
+FetchContent_MakeAvailable(SDL3 imgui spdlog)
 
 add_library(imgui STATIC
     "${imgui_SOURCE_DIR}/imgui.cpp"
@@ -66,6 +77,8 @@ target_include_directories(imgui SYSTEM PUBLIC
 target_link_libraries(imgui PUBLIC SDL3::SDL3)
 
 set_target_properties(imgui PROPERTIES FOLDER "ThirdParty")
+set_target_properties(spdlog PROPERTIES FOLDER "ThirdParty")
 
 add_subdirectory(engine)
+add_subdirectory(devtools)
 add_subdirectory(apps/client)

@@ -1,6 +1,7 @@
 #include "solar/Engine.hpp"
 
 #include "platform/Platform.hpp"
+#include "solar/core/DebugUiHook.hpp"
 #include "solar/platform/Events.hpp"
 #include "solar/platform/Window.hpp"
 #include "solar/render/Renderer.hpp"
@@ -21,7 +22,7 @@ namespace solar
 		constexpr double maxFrameTime = 0.25;
 	}
 
-	int Engine::Run()
+	int Engine::Run(const EngineConfig& in_config)
 	{
 		Platform platform;
 		if (platform.Initialize(Platform::Subsystem::VIDEO) != Error::NONE)
@@ -30,13 +31,17 @@ namespace solar
 		}
 
 		Window window;
-		if (window.Construct("Diorama", 1280, 720) != Error::NONE)
-		{
+		if (window.Construct(
+			in_config.windowTitle,
+			in_config.windowWidth,
+			in_config.windowHeight
+		) != Error::NONE
+		) {
 			return 1;
 		}
 
 		Renderer renderer;
-		if (renderer.Initialize(window) != Error::NONE)
+		if (renderer.Initialize(window, in_config.debugUi) != Error::NONE)
 		{
 			return 1;
 		}

@@ -25,5 +25,6 @@ namespace solar
 
 	private:
 		ImGuiContext* context = nullptr;
+		SDL_Window* sdlWindow = nullptr;
 	};
 }

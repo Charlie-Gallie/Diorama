@@ -76,9 +76,10 @@ namespace solar
 		}
 	}
 
-	Error Renderer::Initialize(Window& in_window)
+	Error Renderer::Initialize(Window& in_window, DebugUiCallback in_debugUiCallback)
 	{
 		sdlWindow = in_window.GetHandle();
+		debugUiCallback = in_debugUiCallback;
 
 		// TODO: advertise DXIL and MSL once the shader toolchain produces them.
 		// Only offering SPIR-V means SDL will always select Vulkan, including on
@@ -160,6 +161,20 @@ namespace solar
 			return Error::RENDERER_FAILURE;
 		}
 
+		if (SDL_WindowSupportsGPUPresentMode(gpuDevice, sdlWindow, SDL_GPU_PRESENTMODE_IMMEDIATE))
+		{
+			SDL_SetGPUSwapchainParameters(
+				gpuDevice,
+				sdlWindow,
+				SDL_GPU_SWAPCHAINCOMPOSITION_SDR,
+				SDL_GPU_PRESENTMODE_IMMEDIATE
+			);
+		}
+		else
+		{
+			LogError("Immediate present mode not supported");
+		}
+
 		return Error::NONE;
 	}
 
@@ -200,7 +215,10 @@ namespace solar
 		}
 
 		imGuiLayer->NewFrame();
-		ImGui::ShowDemoWindow();
+		if (debugUiCallback != nullptr)
+		{
+			debugUiCallback();
+		}
 		imGuiLayer->PrepareDraw(commandBuffer);
 
 		SDL_GPUColorTargetInfo target{};
