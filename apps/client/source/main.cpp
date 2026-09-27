@@ -1,8 +1,6 @@
-#include <iostream>
+#include "solar/Engine.hpp"
 
 int main()
 {
-	std::cout << "Hello Diorama" << std::endl;
-	
-	return 0;
+	return solar::Engine::Run();
 }
