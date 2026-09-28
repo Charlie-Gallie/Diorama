@@ -5,6 +5,7 @@
 #include "solar/core/Math.hpp"
 #include "solar/render/ShadingSettings.hpp"
 #include "solar/voxel/Palette.hpp"
+#include "solar/voxel/VoxelGrid.hpp"
 
 /* Forward declarations */
 struct SDL_Window;
@@ -37,9 +38,9 @@ namespace solar
 
 		void SetShadingSettings(const ShadingSettings& in_settings) { shading = in_settings; }
 
-		// Replaces the voxel model. Temporary: the renderer should be handed models
-		// by the client rather than loading them itself.
-		[[nodiscard]] Error SetModel(const char* in_path);
+		// Uploads a voxel model, replacing whatever was there. The renderer never loads files,
+		// it just gets handed data that something else worked out how to fetch.
+		[[nodiscard]] Error SetVoxelModel(const voxel::VoxelGrid& in_grid, const voxel::Palette& in_palette);
 	private:
 		SDL_Window* sdlWindow = nullptr;
 		SDL_GPUDevice* gpuDevice = nullptr;
@@ -66,7 +67,6 @@ namespace solar
 
 		SDL_GPUPresentMode PickPresentMode();
 
-		[[nodiscard]] Error CreateVoxelTexture(const char* in_path);
 		[[nodiscard]] bool EnsureSceneTexture(int in_width, int in_height);
 	};
 }

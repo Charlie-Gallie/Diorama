@@ -14,5 +14,8 @@ Generated, not authored — no third-party assets, nothing to license.
 | `car_50/40/30/20/10.vox` | **The scale and curvature test.** A 4.30 x 1.80 x 1.50 m hatchback, wheelbase 2.62 m, on 0.65 m wheels, resampled at five densities. Built from signed-distance primitives and sampled analytically, so the wheels are true circles at every resolution rather than one circle scaled down. Carries the things a car is useful for: circular wheels with a recessed rim behind a proud tyre sidewall, wheel arches and a hollow cabin as genuinely concave geometry, one paint colour across panels at every angle, one-voxel panel shut lines at any density, and separate trim, glass, lights and rims. 50 voxels/m exists only here - the shapes scene is 6.2 m on its longest axis, which would exceed the 256 voxel limit of a `.vox` axis. |
 | `chair_20/40.vox` | Recognisable silhouette with thin features (legs), at 20 and 40 voxels/m. Tests whether thin geometry survives at each density. |
 
-Regenerate with the scripts in the session scratch directory, or rewrite them —
-the format is simple enough that the writer is about thirty lines.
+Regenerate the `density_*` and `car_*` sets with `tools/generate_shapes.py` and
+`tools/generate_car.py`. Both write here and are deterministic, so a regeneration
+produces byte-identical files. The older models above predate those scripts and
+have no generator kept - rewrite one if they ever need changing, since the `.vox`
+writer is about thirty lines (`tools/voxfile.py`).

@@ -5,7 +5,6 @@
 #include "solar/core/Log.hpp"
 #include "solar/platform/Window.hpp"
 #include "solar/core/Filesystem.hpp"
-#include "solar/voxel/VoxImport.hpp"
 
 #include <SDL3/SDL.h>
 
@@ -22,9 +21,6 @@ namespace solar
 		constexpr int preferredInternalHeight = 360;
 
 		constexpr SDL_GPUTextureFormat sceneFormat = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
-
-		// Temporary, until the client owns models and hands them to the renderer.
-		constexpr const char* defaultModelPath = "assets/models/test/density_40.vox";
 
 		// Validation layers are expensive, so they are off in Shipping. NDEBUG is a
 		// stand-in until the SE_ feature flags exist: Debug and Development strip it,
@@ -290,17 +286,18 @@ namespace solar
 			return Error::RENDERER_FAILURE;
 		}
 
-		if (CreateVoxelTexture(defaultModelPath) != Error::NONE)
-		{
-			return Error::RENDERER_FAILURE;
-		}
-
 		SOLAR_LOG_INFO(RENDER, "Initialized renderer");
 		return Error::NONE;
 	}
 
-	Error Renderer::SetModel(const char* in_path)
+	Error Renderer::SetVoxelModel(const voxel::VoxelGrid& in_grid, const voxel::Palette& in_palette)
 	{
+		if (in_grid.size.x <= 0 || in_grid.size.y <= 0 || in_grid.size.z <= 0)
+		{
+			SOLAR_LOG_ERR(RENDER, "Voxel model has an empty axis");
+			return Error::INVALID_DATA;
+		}
+
 		// Release is deferred by SDL until the GPU has finished with the texture,
 		// so the frame already in flight keeps reading the old one safely.
 		if (voxelTexture != nullptr)
@@ -309,19 +306,9 @@ namespace solar
 			voxelTexture = nullptr;
 		}
 
-		return CreateVoxelTexture(in_path);
-	}
+		voxelPalette = in_palette;
 
-	Error Renderer::CreateVoxelTexture(const char* in_path)
-	{
-		voxel::VoxelGrid grid;
-
-		const Error importError = voxel::ImportVoxFile(in_path, grid, voxelPalette);
-
-		if (importError != Error::NONE)
-		{
-			return importError;
-		}
+		const voxel::VoxelGrid& grid = in_grid;
 
 		SDL_GPUTextureCreateInfo textureInfo{};
 		textureInfo.type = SDL_GPU_TEXTURETYPE_3D;
