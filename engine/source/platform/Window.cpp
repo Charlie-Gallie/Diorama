@@ -41,7 +41,15 @@ namespace solar
 		}
 	}
 
-	Error Window::Construct(const char* in_title, int32_t in_width, int32_t in_height)
+		void Window::SetRelativeMouseMode(bool in_enabled)
+	{
+		if (SDL_SetWindowRelativeMouseMode(handle, in_enabled) == false)
+		{
+			SOLAR_LOG_WARN(PLATFORM, "Failed to set relative mouse mode: {}", SDL_GetError());
+		}
+	}
+
+Error Window::Construct(const char* in_title, int32_t in_width, int32_t in_height)
 	{
 		handle = SDL_CreateWindow(
 			in_title,

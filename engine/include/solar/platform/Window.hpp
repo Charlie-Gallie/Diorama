@@ -24,6 +24,10 @@ namespace solar
 
 		// Returning a pointer to an incomplete type keeps SDL out of this header.
 		inline SDL_Window* GetHandle() const { return handle; }
+
+		// Hides the cursor and reports motion as deltas rather than a position,
+		// so looking around is not bounded by the edges of the screen.
+		void SetRelativeMouseMode(bool in_enabled);
 	private:
 		explicit Window(SDL_Window* in_handle);
 		SDL_Window* handle = nullptr;

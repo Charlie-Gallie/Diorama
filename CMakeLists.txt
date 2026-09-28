@@ -101,6 +101,18 @@ target_compile_definitions(solar_flags INTERFACE
     SOLAR_LOG_TRACE_ENABLED=$<IF:$<CONFIG:Shipping>,0,1>
 )
 
+# --- Assets ---
+# Copied next to the executable so paths can be resolved from SDL_GetBasePath rather than the working directory
+# which differs between F5, a shortcut and a shipped install.
+# copy_directory_if_different runs every build but only touches files that actually changed.
+add_custom_target(game_assets ALL
+    COMMAND "${CMAKE_COMMAND}" -E copy_directory_if_different
+            "${CMAKE_SOURCE_DIR}/assets"
+            "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/$<CONFIG>/assets"
+    COMMENT "Copying assets"
+    VERBATIM
+)
+
 add_subdirectory(engine)
 add_subdirectory(devtools)
 add_subdirectory(apps/client)

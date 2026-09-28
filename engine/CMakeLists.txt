@@ -4,9 +4,11 @@ add_library(solar_engine STATIC
 	"source/core/Error.cpp"
 	"source/platform/Events.cpp"
 	"source/platform/Platform.cpp"
+	"source/platform/Input.cpp"
 	"source/core/Log.cpp"
 	"source/render/Renderer.cpp"
 	"source/core/Filesystem.cpp"
+	"source/voxel/VoxImport.cpp"
 	"source/render/ImGuiLayer.cpp"
 )
 add_library(solar::engine ALIAS solar_engine)
@@ -64,12 +66,14 @@ endfunction()
 
 solar_compile_shader("shaders/Fullscreen.vert.hlsl" vs_6_0 fullscreen_vert)
 solar_compile_shader("shaders/Fullscreen.frag.hlsl" ps_6_0 fullscreen_frag)
+solar_compile_shader("shaders/Present.frag.hlsl" ps_6_0 present_frag)
 
 # A custom target is what actually gets built; the custom commands above only run
 # when something depends on their output.
 add_custom_target(solar_shaders DEPENDS
 	"${fullscreen_vert}"
 	"${fullscreen_frag}"
+	"${present_frag}"
 )
 
 # Anything linking the engine builds the shaders first.
@@ -79,9 +83,11 @@ add_dependencies(solar_engine solar_shaders)
 target_sources(solar_engine PRIVATE
 	"shaders/Fullscreen.vert.hlsl"
 	"shaders/Fullscreen.frag.hlsl"
+	"shaders/Present.frag.hlsl"
 )
 set_source_files_properties(
 	"shaders/Fullscreen.vert.hlsl"
 	"shaders/Fullscreen.frag.hlsl"
+	"shaders/Present.frag.hlsl"
 	PROPERTIES HEADER_FILE_ONLY TRUE
 )

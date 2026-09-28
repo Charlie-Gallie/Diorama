@@ -11,6 +11,8 @@ namespace solar
 		case Error::NONE:				return "No error";
 		case Error::PLATFORM_FAILURE:	return "Platform failure";
 		case Error::RENDERER_FAILURE:	return "Renderer failure";
+		case Error::FILESYSTEM_FAILURE:	return "Filesystem failure";
+		case Error::INVALID_DATA:		return "Invalid data";
 		}
 
 		return "Unknown error";

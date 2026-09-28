@@ -1,4 +1,5 @@
 add_library(solar_devtools STATIC
+	"source/CameraPanel.cpp"
 	"source/DevTools.cpp"
 	"source/Performance.cpp"
 )
