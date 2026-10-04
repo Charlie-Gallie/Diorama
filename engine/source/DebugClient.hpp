@@ -3,6 +3,7 @@
 #include "solar/core/DebugUiHook.hpp"
 #include "solar/core/Error.hpp"
 #include "solar/render/Camera.hpp"
+#include "solar/render/LightSettings.hpp"
 #include "solar/render/ShadingSettings.hpp"
 
 namespace solar
@@ -33,6 +34,7 @@ namespace solar
 
 		Camera camera;
 		ShadingSettings shading;
+		LightSettings lights;
 		DebugUiContext debugUi;
 
 		int modelIndex = 0;

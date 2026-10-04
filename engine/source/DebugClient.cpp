@@ -122,6 +122,7 @@ namespace solar
 
 		debugUi.camera = &camera;
 		debugUi.shading = &shading;
+		debugUi.lights = &lights;
 		debugUi.modelIndex = &modelIndex;
 		debugUi.densityIndex = &densityIndex;
 		debugUi.cameraPresets = CameraPresets();
@@ -175,6 +176,7 @@ namespace solar
 		UpdateSelection(inout_renderer);
 
 		inout_renderer.SetShadingSettings(shading);
+		inout_renderer.SetLightSettings(lights);
 	}
 
 	void DebugClient::UpdateFlyCamera(Window& inout_window, float in_deltaTime)

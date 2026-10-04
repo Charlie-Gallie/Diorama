@@ -3,6 +3,7 @@
 #include "solar/core/DebugUiHook.hpp"
 #include "solar/core/Error.hpp"
 #include "solar/core/Math.hpp"
+#include "solar/render/LightSettings.hpp"
 #include "solar/render/ShadingSettings.hpp"
 #include "solar/voxel/Palette.hpp"
 #include "solar/voxel/VoxelGrid.hpp"
@@ -38,6 +39,10 @@ namespace solar
 
 		void SetShadingSettings(const ShadingSettings& in_settings) { shading = in_settings; }
 
+		// Exposure travels with the rig because the two are tuned together, even though it is
+		// applied in the present pass rather than with the lights
+		void SetLightSettings(const LightSettings& in_settings) { lights = in_settings; }
+
 		// Uploads a voxel model, replacing whatever was there. The renderer never loads files,
 		// it just gets handed data that something else worked out how to fetch.
 		[[nodiscard]] Error SetVoxelModel(const voxel::VoxelGrid& in_grid, const voxel::Palette& in_palette);
@@ -52,6 +57,7 @@ namespace solar
 		SDL_GPUTexture* sceneTexture = nullptr;
 		SDL_GPUSampler* nearestSampler = nullptr;
 		ShadingSettings shading;
+		LightSettings lights;
 		int sceneWidth = 0;
 		int sceneHeight = 0;
 		SDL_GPUTexture* voxelTexture = nullptr;

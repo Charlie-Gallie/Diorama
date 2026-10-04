@@ -2,6 +2,7 @@
 
 #include "CameraData.hpp"
 #include "ImGuiLayer.hpp"
+#include "LightData.hpp"
 #include "solar/core/Log.hpp"
 #include "solar/platform/Window.hpp"
 #include "solar/core/Filesystem.hpp"
@@ -18,9 +19,13 @@ namespace solar
 		// window height nearest to this, so the upscale is a whole number of
 		// pixels and still fills the screen. Fair view size is guaranteed by the
 		// camera covering a fixed extent in world units, not by this being fixed.
-		constexpr int preferredInternalHeight = 360;
+		constexpr int preferredInternalHeight = 720;
 
-		constexpr SDL_GPUTextureFormat sceneFormat = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+		// Float rather than UNORM so lighting is not clamped at 1.0. Without the headroom the
+		// three light terms have to sum under one, which forces a weak key and loses the warm
+		// highlight exactly where it is strongest. Exposure, tonemap and the sRGB encode all
+		// happen in the present pass instead.
+		constexpr SDL_GPUTextureFormat sceneFormat = SDL_GPU_TEXTUREFORMAT_R16G16B16A16_FLOAT;
 
 		// Validation layers are expensive, so they are off in Shipping. NDEBUG is a
 		// stand-in until the SE_ feature flags exist: Debug and Development strip it,
@@ -134,6 +139,23 @@ namespace solar
 			return Error::RENDERER_FAILURE;
 		}
 
+		// Checked up front rather than discovered as a null texture later. Every Vulkan
+		// implementation we care about supports this, so a failure here means something is very
+		// wrong and is worth saying so plainly
+		if (SDL_GPUTextureSupportsFormat(
+			gpuDevice,
+			sceneFormat,
+			SDL_GPU_TEXTURETYPE_2D,
+			SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER
+		) == false)
+		{
+			SOLAR_LOG_ERR(
+				RENDER,
+				"The GPU cannot use the HDR scene format as a colour target and sampler"
+			);
+			return Error::RENDERER_FAILURE;
+		}
+
 		if (SDL_ClaimWindowForGPUDevice(gpuDevice, sdlWindow) == false)
 		{
 			SOLAR_LOG_ERR(
@@ -182,11 +204,13 @@ namespace solar
 			return Error::RENDERER_FAILURE;
 		}
 
+		// Three uniform buffers: camera, palette, lights. This has to match the number of cbuffers
+		// the shader declares or the bindings silently slide along by one
 		SDL_GPUShader* fragShader = LoadShader(
 			gpuDevice,
 			"shaders/Fullscreen.frag.spv",
 			SDL_GPU_SHADERSTAGE_FRAGMENT,
-			2,
+			3,
 			1,
 			0
 		);
@@ -498,7 +522,10 @@ namespace solar
 		{
 			SDL_GPUColorTargetInfo target{};
 			target.texture = sceneTexture;
-			target.clear_color = { 0.05f, 0.05f, 0.08f, 1.0f };
+			// Linear, like everything else written into this target. The scene shader covers every
+			// pixel so the clear is never actually seen, but it stops being a lie the first time
+			// something does not
+			target.clear_color = { 0.012f, 0.012f, 0.02f, 1.0f };
 			target.load_op = SDL_GPU_LOADOP_CLEAR;
 			target.store_op = SDL_GPU_STOREOP_STORE;
 
@@ -510,9 +537,12 @@ namespace solar
 			const float sceneAspect = static_cast<float>(sceneWidth) / static_cast<float>(sceneHeight);
 			const CameraData cameraData = MakeCameraData(in_camera, sceneAspect, sceneHeight, voxelGridSize, shading);
 
+			const LightData lightData = MakeLightData(lights);
+
 			SDL_PushGPUFragmentUniformData(commandBuffer, 0, &cameraData, sizeof(cameraData));
 			SDL_PushGPUFragmentUniformData(commandBuffer, 1, voxelPalette.colours.data(),
 				static_cast<Uint32>(voxelPalette.colours.size() * sizeof(Vec4)));
+			SDL_PushGPUFragmentUniformData(commandBuffer, 2, &lightData, sizeof(lightData));
 
 			SDL_BindGPUGraphicsPipeline(scenePass, graphicsPipeline);
 			SDL_BindGPUFragmentStorageTextures(scenePass, 0, &voxelTexture, 1);
@@ -552,7 +582,7 @@ namespace solar
 			const Vec4 presentData = {
 				static_cast<float>(sceneWidth),
 				static_cast<float>(sceneHeight),
-				0.0f,
+				lights.exposure,
 				0.0f
 			};
 

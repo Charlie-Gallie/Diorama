@@ -3,6 +3,7 @@
 #include "solar/core/DebugUiHook.hpp"
 #include "solar/core/Log.hpp"
 #include "solar/render/Camera.hpp"
+#include "solar/render/LightSettings.hpp"
 #include "solar/render/ShadingSettings.hpp"
 
 #include <imgui.h>
@@ -127,6 +128,46 @@ namespace solar::devtools
 			ImGui::DragFloat("Axis tint", &inout_shading.axisTint, 0.01f, 0.0f, 1.0f, "%.2f");
 		}
 
+		// Colours are linear, so the swatches read darker than the light they describe. Editing
+		// them in sRGB would be friendlier for an artist, but it would also mean two numbers for
+		// every colour, and the point of these sliders is to find the values by eye
+		void DrawLights(LightSettings& inout_lights)
+		{
+			float azimuthDegrees = glm::degrees(inout_lights.keyAzimuth);
+			float elevationDegrees = glm::degrees(inout_lights.keyElevation);
+
+			if (ImGui::DragFloat("Key azimuth", &azimuthDegrees, 0.5f, -360.0f, 360.0f, "%.1f deg"))
+			{
+				inout_lights.keyAzimuth = glm::radians(azimuthDegrees);
+			}
+
+			// Below the horizon is allowed because it is occasionally what a scene wants, and
+			// nothing breaks if the key comes from underneath
+			if (ImGui::DragFloat("Key elevation", &elevationDegrees, 0.5f, -89.0f, 89.0f, "%.1f deg"))
+			{
+				inout_lights.keyElevation = glm::radians(elevationDegrees);
+			}
+
+			ImGui::ColorEdit3("Key colour", &inout_lights.keyColour.x, ImGuiColorEditFlags_Float);
+			ImGui::DragFloat("Key intensity", &inout_lights.keyIntensity, 0.01f, 0.0f, 8.0f, "%.2f");
+
+			ImGui::Spacing();
+
+			ImGui::ColorEdit3("Sky colour", &inout_lights.skyColour.x, ImGuiColorEditFlags_Float);
+			ImGui::DragFloat("Sky intensity", &inout_lights.skyIntensity, 0.01f, 0.0f, 4.0f, "%.2f");
+
+			ImGui::ColorEdit3("Ground colour", &inout_lights.groundColour.x, ImGuiColorEditFlags_Float);
+			ImGui::DragFloat("Ground intensity", &inout_lights.groundIntensity, 0.01f, 0.0f, 4.0f, "%.2f");
+
+			ImGui::DragFloat("Occlusion floor", &inout_lights.occlusionFloor, 0.01f, 0.0f, 1.0f, "%.2f");
+
+			ImGui::Spacing();
+
+			// The one control that is not a light. Worth having beside them because the rig is
+			// judged through it - a key that looks too hot is often just an exposure that is high
+			ImGui::DragFloat("Exposure", &inout_lights.exposure, 0.01f, 0.05f, 8.0f, "%.2f");
+		}
+
 		void DrawModel(DebugUiContext& inout_context)
 		{
 			for (int index = 0; index < inout_context.modelCount; ++index)
@@ -174,7 +215,11 @@ namespace solar::devtools
 				densityName = in_context.densityNames[density];
 			}
 
-			char text[512];
+			const LightSettings lights = in_context.lights != nullptr
+				? *in_context.lights
+				: LightSettings{};
+
+			char text[1024];
 
 			std::snprintf(text, sizeof(text),
 				"position   %.3f, %.3f, %.3f  units\n"
@@ -182,6 +227,10 @@ namespace solar::devtools
 				"yaw %.1f deg   pitch %.1f deg   fovY %.1f deg\n"
 				"vertical view %.2f m at %.2f m   %s vox/m\n"
 				"%s   radius %.2f   smooth above %.2f   axis tint %.2f\n"
+				"key   %.1f az  %.1f el   %.3f, %.3f, %.3f  x %.2f\n"
+				"sky   %.3f, %.3f, %.3f  x %.2f\n"
+				"grnd  %.3f, %.3f, %.3f  x %.2f\n"
+				"occlusion floor %.2f   exposure %.2f\n"
 				"MakeOrbitCamera(target, %.1ff, %.1ff, %.3ff, %.1ff)",
 				in_camera.position.x, in_camera.position.y, in_camera.position.z,
 				positionMetres.x, positionMetres.y, positionMetres.z,
@@ -189,6 +238,11 @@ namespace solar::devtools
 				viewMetres, focusDistance, densityName,
 				shading.smoothNormals ? "smooth normals" : "flat normals",
 				shading.normalRadius, shading.normalFadeVoxels, shading.axisTint,
+				glm::degrees(lights.keyAzimuth), glm::degrees(lights.keyElevation),
+				lights.keyColour.x, lights.keyColour.y, lights.keyColour.z, lights.keyIntensity,
+				lights.skyColour.x, lights.skyColour.y, lights.skyColour.z, lights.skyIntensity,
+				lights.groundColour.x, lights.groundColour.y, lights.groundColour.z, lights.groundIntensity,
+				lights.occlusionFloor, lights.exposure,
 				glm::degrees(in_camera.yaw), glm::degrees(in_camera.pitch),
 				glm::length(in_camera.position), glm::degrees(in_camera.fovY));
 
@@ -248,6 +302,12 @@ namespace solar::devtools
 		{
 			ImGui::SeparatorText("Shading");
 			DrawShading(*inout_context.shading);
+		}
+
+		if (inout_context.lights != nullptr)
+		{
+			ImGui::SeparatorText("Lights");
+			DrawLights(*inout_context.lights);
 		}
 
 		if (inout_context.modelIndex != nullptr && inout_context.modelNames != nullptr)

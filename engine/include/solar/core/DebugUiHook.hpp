@@ -4,6 +4,7 @@ namespace solar
 {
 	struct Camera;
 	struct CameraPreset;
+	struct LightSettings;
 	struct ShadingSettings;
 
 	// What the debug UI is allowed to see and change.
@@ -15,6 +16,8 @@ namespace solar
 		Camera* camera = nullptr;
 
 		ShadingSettings* shading = nullptr;
+
+		LightSettings* lights = nullptr;
 
 		// Indices into modelNames and densityNames, applied by the engine on change
 		int* modelIndex = nullptr;

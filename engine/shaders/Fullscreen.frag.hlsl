@@ -14,20 +14,18 @@ cbuffer PaletteData : register(b1, space3)
 	float4 paletteColours[256];
 };
 
+cbuffer LightData : register(b2, space3)
+{
+	float4 keyDirection; // xyz unit direction towards the key, w intensity
+	float4 keyColour; // xyz linear colour
+	float4 skyColour; // xyz linear colour, w intensity
+	float4 groundColour; // xyz linear colour, w intensity
+	float4 ambientSettings; // x occlusion floor
+};
+
 Texture3D<uint> voxels : register(t0, space2);
 
 static const int maxSteps = 768;
-static const float3 lightDirection = normalize(float3(0.4f, 0.8f, 0.45f));
-
-// The palette is converted to linear on import and lighting is done in linear, but the
-// swapchain is a UNORM format, so the result has to be encoded to be displayed
-float3 LinearToSrgb(float3 in_colour)
-{
-	const float3 low = in_colour * 12.92f;
-	const float3 high = 1.055f * pow(abs(in_colour), 1.0f / 2.4f) - 0.055f;
-
-	return select(in_colour <= 0.0031308f, low, high);
-}
 
 struct PSInput
 {
@@ -291,20 +289,20 @@ TraceResult TraceGrid(float3 in_origin, float3 in_direction, float in_tStart, fl
 	return result;
 }
 
-bool IsInShadow(float3 in_gridPoint, float3 in_normal)
+bool IsInShadow(float3 in_gridPoint, float3 in_normal, float3 in_lightDirection)
 {
 	// Offset along the normal so the ray starts in the empty neighbour rather than the voxel it is leaving
 	const float3 origin = in_gridPoint + in_normal * 0.01f;
 
 	// Grid space is a uniform scale of world space, so a world direction is still a direction here
-	const BoxHit bounds = IntersectBox(origin, lightDirection, float3(0.0f, 0.0f, 0.0f), gridSize.xyz);
+	const BoxHit bounds = IntersectBox(origin, in_lightDirection, float3(0.0f, 0.0f, 0.0f), gridSize.xyz);
 
 	if (bounds.hit == false)
 	{
 		return false;
 	}
 
-	const TraceResult shadow = TraceGrid(origin, lightDirection, 0.0f, bounds.tExit, float3(0.0f, 0.0f, 0.0f));
+	const TraceResult shadow = TraceGrid(origin, in_lightDirection, 0.0f, bounds.tExit, float3(0.0f, 0.0f, 0.0f));
 
 	return shadow.material != 0;
 }
@@ -336,7 +334,7 @@ float4 main(PSInput in_input) : SV_Target
 
 	if (box.hit == false)
 	{
-		return float4(LinearToSrgb(background), 1.0f);
+		return float4(background, 1.0f);
 	}
 
 	// Scaling into voxel units leaves t unchanged, because origin and direction are scaled together
@@ -354,7 +352,7 @@ float4 main(PSInput in_input) : SV_Target
 
 	if (hit.material == 0)
 	{
-		return float4(LinearToSrgb(background), 1.0f);
+		return float4(background, 1.0f);
 	}
 
 	const float3 hitPoint = gridOrigin + gridDirection * hit.t;
@@ -372,22 +370,33 @@ float4 main(PSInput in_input) : SV_Target
 		? ShadingNormal(hitPoint, hit.normal, voxelsPerPixel)
 		: hit.normal;
 
-	float diffuse = saturate(dot(shadingNormal, lightDirection));
+	float diffuse = saturate(dot(shadingNormal, keyDirection.xyz));
 
-	if (diffuse > 0.0f && IsInShadow(hitPoint, hit.normal))
+	if (diffuse > 0.0f && IsInShadow(hitPoint, hit.normal, keyDirection.xyz))
 	{
 		diffuse = 0.0f;
 	}
 
 	const float occlusion = VoxelAmbientOcclusion(hitPoint, hit.normal);
 
-	const float light = diffuse * 0.9f;
-	const float ambientScale = lerp(0.15f, 1.0f, occlusion);
+	// Sky light arrives from above and ground bounce from below, so the two are the ends of a
+	// hemisphere and the normal picks a point along it. This is what stops everything the key
+	// misses from being one flat value - surfaces separate by which way they face even in shadow
+	const float upness = saturate(shadingNormal.y * 0.5f + 0.5f);
 
-	const float3 ambient = float3(0.25f, 0.27f, 0.32f) * ambientScale;
-	float3 lit = paletteColours[hit.material].rgb * (ambient + light);
+	const float3 sky = skyColour.rgb * skyColour.w;
+	const float3 ground = groundColour.rgb * groundColour.w;
+
+	// Occlusion is how much of the hemisphere a point can see, so it belongs on these two and
+	// not on the key, which already has a real shadow ray of its own
+	const float3 ambient = lerp(ground, sky, upness) * lerp(ambientSettings.x, 1.0f, occlusion);
+
+	const float3 key = keyColour.rgb * keyDirection.w * diffuse;
+
+	float3 lit = paletteColours[hit.material].rgb * (key + ambient);
 
 	lit *= lerp(1.0f, AxisTint(hit.normal), shadingA.z);
 
-	return float4(LinearToSrgb(lit), 1.0f);
+	// Linear and unclamped. The present pass exposes, tonemaps and encodes it
+	return float4(lit, 1.0f);
 }
