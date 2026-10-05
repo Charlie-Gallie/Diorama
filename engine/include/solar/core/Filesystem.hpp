@@ -13,6 +13,11 @@ namespace filesystem {
 	// The contents of the buffer will be freed (if required)
 	Error ReadFile(const char* in_path, Buffer& out_buffer);
 
+	// Nanoseconds since the epoch, for noticing that a file has been written since it was read.
+	// Resolved exactly as ReadFile resolves it, so a watcher cannot end up watching one file
+	// while the loader reads another
+	[[nodiscard]] Error GetModifiedTime(const char* in_path, int64_t& out_time);
+
 	void FreeBuffer(Buffer& inout_buffer);
 
 	struct Buffer

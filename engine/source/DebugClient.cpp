@@ -1,5 +1,6 @@
 #include "DebugClient.hpp"
 
+#include "solar/core/Filesystem.hpp"
 #include "solar/core/Log.hpp"
 #include "solar/platform/Input.hpp"
 #include "solar/platform/Window.hpp"
@@ -39,6 +40,10 @@ namespace solar
 		constexpr const char* mengerPath = "assets/models/test/menger_3.vox";
 		constexpr float mengerVoxelSize = 1.0f / 27.0f;
 		constexpr float mengerSmallScale = 0.5f;
+
+		// How often the model files are checked for having been written. Often enough to feel
+		// immediate, rarely enough that the cost of asking the OS never matters
+		constexpr float hotReloadInterval = 0.25f;
 
 		// Clear of the subject on the opposite side to the figure, with the small one set forward
 		// of the large one rather than further out, so both stay in a default framing
@@ -167,6 +172,21 @@ namespace solar
 			{ mengerPath, mengerVoxelSize }
 		};
 
+		// Recorded before anything is read rather than after, so a file that fails to parse is not
+		// retried on every poll until it changes again
+		for (int index = 0; index < sceneModelCount; ++index)
+		{
+			watched[index].path = sources[index].path;
+			watched[index].loadedTime = 0;
+
+			// A missing file is about to be reported by the import anyway
+			(void)filesystem::GetModifiedTime(sources[index].path, watched[index].loadedTime);
+
+			watched[index].lastSeenTime = watched[index].loadedTime;
+		}
+
+		watchedCount = sceneModelCount;
+
 		// The grids have to outlive the upload, so they stay in scope until it has happened
 		voxel::VoxelGrid grids[sceneModelCount];
 		voxel::Palette palettes[sceneModelCount];
@@ -246,6 +266,7 @@ namespace solar
 
 		UpdateFlyCamera(inout_window, in_deltaTime);
 		UpdateSelection(inout_renderer);
+		UpdateHotReload(inout_renderer, in_deltaTime);
 
 		inout_renderer.SetShadingSettings(shading);
 		inout_renderer.SetLightSettings(lights);
@@ -296,6 +317,53 @@ namespace solar
 		{
 			camera.position += normalize(move) * speed * in_deltaTime;
 		}
+	}
+
+	void DebugClient::UpdateHotReload(Renderer& inout_renderer, float in_deltaTime)
+	{
+		sinceLastPoll += in_deltaTime;
+
+		if (sinceLastPoll < hotReloadInterval)
+		{
+			return;
+		}
+
+		sinceLastPoll = 0.0f;
+
+		bool changed = false;
+
+		for (int index = 0; index < watchedCount; ++index)
+		{
+			WatchedModel& model = watched[index];
+
+			int64_t time = 0;
+
+			if (filesystem::GetModifiedTime(model.path, time) != Error::NONE)
+			{
+				continue;
+			}
+
+			// Reloaded only once a changed file has stopped changing. A save is not atomic, so
+			// acting on the first poll that notices one risks reading a half written file
+			if (time != model.loadedTime && time == model.lastSeenTime)
+			{
+				changed = true;
+			}
+
+			model.lastSeenTime = time;
+		}
+
+		if (changed == false)
+		{
+			return;
+		}
+
+		SOLAR_LOG_INFO(CORE, "A model changed on disk, reloading the scene");
+
+		// LoadScene rewrites the watch list before it reads anything, so a file that fails to
+		// parse is reported once and then left alone until it is saved again. Nothing is uploaded
+		// unless every model imported, so a bad save leaves the scene exactly as it was
+		(void)LoadScene(inout_renderer);
 	}
 
 	void DebugClient::UpdateSelection(Renderer& inout_renderer)

@@ -6,14 +6,37 @@
 
 namespace solar
 {
+	namespace
+	{
+		// Dev builds look in the source tree first, so a model saved in MagicaVoxel is picked up by a
+		// running game rather than waiting for the next build to copy it across. Shipping has no
+		// source tree, so SOLAR_SOURCE_DIR is not defined there and this falls straight through.
+		// Anything the source tree does not have - compiled shaders, for one - falls through too
+		std::string ResolvePath(const char* in_path)
+		{
+			// SDL can give the path of where the program is executed from which apparently std:: can't
+			// (though the execution path works bit differently for macOS).
+			// SDL says "The returned path is guaranteed to end with a path separator" so no need to add it
+			static const char* basePath = SDL_GetBasePath();
+
+#ifdef SOLAR_SOURCE_DIR
+			const std::string fromSource = SOLAR_SOURCE_DIR + std::string(in_path);
+
+			SDL_PathInfo info{};
+
+			if (SDL_GetPathInfo(fromSource.c_str(), &info))
+			{
+				return fromSource;
+			}
+#endif
+
+			return basePath + std::string(in_path);
+		}
+	}
+
 	Error filesystem::ReadFile(const char* in_path, Buffer& out_buffer)
 	{
-		// SDL can give the path of there the program is executed from which apparently std:: can't
-		// (though the execution path works bit differently for macOS)
-		static const char* basePath = SDL_GetBasePath();
-
-		// SDL says "The returned path is guaranteed to end with a path separator" so no need to add it
-		std::string fullPath = basePath + std::string(in_path);
+		const std::string fullPath = ResolvePath(in_path);
 		const char* fullPathCstr = fullPath.c_str();
 
 		// Clear contents if anything is contained
@@ -31,6 +54,24 @@ namespace solar
 			);
 			return Error::FILESYSTEM_FAILURE;
 		}
+
+		return Error::NONE;
+	}
+
+	Error filesystem::GetModifiedTime(const char* in_path, int64_t& out_time)
+	{
+		const std::string fullPath = ResolvePath(in_path);
+
+		SDL_PathInfo info{};
+
+		if (SDL_GetPathInfo(fullPath.c_str(), &info) == false)
+		{
+			// Not logged. A watcher asks this of every file every poll, and whether a missing file
+			// matters is the caller's judgement rather than this function's
+			return Error::FILESYSTEM_FAILURE;
+		}
+
+		out_time = static_cast<int64_t>(info.modify_time);
 
 		return Error::NONE;
 	}

@@ -36,6 +36,7 @@ namespace solar
 	private:
 		void UpdateFlyCamera(Window& inout_window, float in_deltaTime);
 		void UpdateSelection(Renderer& inout_renderer);
+		void UpdateHotReload(Renderer& inout_renderer, float in_deltaTime);
 
 		// Uploads the selected model and the reference figure, then places both. Called again
 		// whenever the panel picks a different model or density
@@ -51,6 +52,18 @@ namespace solar
 		// scale and two Menger sponges of a known size to shade against
 		VoxelInstance instances[4];
 		int instanceCount = 0;
+
+		// Every file the current scene was built from, so saving one in MagicaVoxel reloads it
+		struct WatchedModel
+		{
+			const char* path = nullptr;
+			int64_t loadedTime = 0;
+			int64_t lastSeenTime = 0;
+		};
+
+		WatchedModel watched[maxSceneModels];
+		int watchedCount = 0;
+		float sinceLastPoll = 0.0f;
 
 		int modelIndex = 0;
 		int densityIndex = 0;

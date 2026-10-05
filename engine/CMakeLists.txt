@@ -16,6 +16,12 @@ add_library(solar::engine ALIAS solar_engine)
 
 target_include_directories(solar_engine PUBLIC include)
 
+# Lets a dev build read assets from the source tree, so saving a model shows up in a running
+# game instead of waiting for the next build to copy it across. Shipping has no source tree
+target_compile_definitions(solar_engine PRIVATE
+	$<$<NOT:$<CONFIG:Shipping>>:SOLAR_SOURCE_DIR=\"${CMAKE_SOURCE_DIR}/\">
+)
+
 # PUBLIC: feature flags must be identical in every target that links the engine
 target_link_libraries(solar_engine PUBLIC solar::flags)
 
