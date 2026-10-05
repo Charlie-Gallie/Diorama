@@ -1,11 +1,13 @@
 #include "solar/render/Renderer.hpp"
 
 #include "CameraData.hpp"
+#include "EnvironmentData.hpp"
 #include "ImGuiLayer.hpp"
-#include "LightData.hpp"
+#include "SceneData.hpp"
 #include "solar/core/Log.hpp"
 #include "solar/platform/Window.hpp"
 #include "solar/core/Filesystem.hpp"
+#include "solar/voxel/VoxelGrid.hpp"
 
 #include <SDL3/SDL.h>
 
@@ -204,13 +206,14 @@ namespace solar
 			return Error::RENDERER_FAILURE;
 		}
 
-		// Three uniform buffers: camera, palette, lights. This has to match the number of cbuffers
-		// the shader declares or the bindings silently slide along by one
+		// Four uniform buffers: camera, palette, environment, scene. This has to match the number
+		// of cbuffers the shader declares or the bindings silently slide along by one, and four
+		// is also as many as SDL_GPU allows per stage
 		SDL_GPUShader* fragShader = LoadShader(
 			gpuDevice,
 			"shaders/Fullscreen.frag.spv",
 			SDL_GPU_SHADERSTAGE_FRAGMENT,
-			3,
+			4,
 			1,
 			0
 		);
@@ -314,99 +317,238 @@ namespace solar
 		return Error::NONE;
 	}
 
-	Error Renderer::SetVoxelModel(const voxel::VoxelGrid& in_grid, const voxel::Palette& in_palette)
+	Error Renderer::SetVoxelModels(const VoxelModel* in_models, int in_count)
 	{
-		if (in_grid.size.x <= 0 || in_grid.size.y <= 0 || in_grid.size.z <= 0)
+		if (in_models == nullptr || in_count <= 0 || in_count > maxSceneModels)
 		{
-			SOLAR_LOG_ERR(RENDER, "Voxel model has an empty axis");
+			SOLAR_LOG_ERR(RENDER, "A scene needs 1 to {} models, was given {}", maxSceneModels, in_count);
 			return Error::INVALID_DATA;
 		}
 
-		// Release is deferred by SDL until the GPU has finished with the texture,
-		// so the frame already in flight keeps reading the old one safely.
+		// Models are stacked along Z, so the atlas is as wide and tall as the largest of them and as
+		// deep as all of them together. Wasteful when their shapes disagree, and exactly what a real
+		// brick pool replaces later
+		IVec3 atlasSize = { 0, 0, 0 };
+
+		// One palette serves the whole scene, so each model's indices are shifted clear of every
+		// other model's and the voxel data is remapped to match as it uploads
+		int paletteBases[maxSceneModels]{};
+		int paletteUsed = 0;
+
+		for (int index = 0; index < in_count; ++index)
+		{
+			const VoxelModel& model = in_models[index];
+
+			if (model.grid == nullptr || model.palette == nullptr || model.voxelSize <= 0.0f)
+			{
+				SOLAR_LOG_ERR(RENDER, "Model {} is missing a grid, a palette or a voxel size", index);
+				return Error::INVALID_DATA;
+			}
+
+			const IVec3 size = model.grid->size;
+
+			if (size.x <= 0 || size.y <= 0 || size.z <= 0)
+			{
+				SOLAR_LOG_ERR(RENDER, "Model {} has an empty axis", index);
+				return Error::INVALID_DATA;
+			}
+
+			int highestMaterial = 0;
+
+			for (const uint8_t material : model.grid->materials)
+			{
+				highestMaterial = SDL_max(highestMaterial, static_cast<int>(material));
+			}
+
+			paletteBases[index] = paletteUsed;
+			paletteUsed += highestMaterial;
+
+			loadedModels[index].atlasOffset = { 0, 0, atlasSize.z };
+			loadedModels[index].size = size;
+			loadedModels[index].voxelSize = model.voxelSize;
+
+			atlasSize.x = SDL_max(atlasSize.x, size.x);
+			atlasSize.y = SDL_max(atlasSize.y, size.y);
+			atlasSize.z += size.z;
+		}
+
+		// Index 0 stays air, so only the rest are available to share out
+		if (paletteUsed >= static_cast<int>(voxel::paletteSize))
+		{
+			SOLAR_LOG_ERR(
+				RENDER,
+				"Scene models need {} palette entries, only {} exist",
+				paletteUsed, voxel::paletteSize - 1
+			);
+			return Error::INVALID_DATA;
+		}
+
+		// Release is deferred by SDL until the GPU has finished with the texture, so the frame
+		// already in flight keeps reading the old one safely
 		if (voxelTexture != nullptr)
 		{
 			SDL_ReleaseGPUTexture(gpuDevice, voxelTexture);
 			voxelTexture = nullptr;
 		}
 
-		voxelPalette = in_palette;
-
-		const voxel::VoxelGrid& grid = in_grid;
-
 		SDL_GPUTextureCreateInfo textureInfo{};
 		textureInfo.type = SDL_GPU_TEXTURETYPE_3D;
 		textureInfo.format = SDL_GPU_TEXTUREFORMAT_R8_UINT;
 		textureInfo.usage = SDL_GPU_TEXTUREUSAGE_GRAPHICS_STORAGE_READ;
-		textureInfo.width = static_cast<Uint32>(grid.size.x);
-		textureInfo.height = static_cast<Uint32>(grid.size.y);
-		// Depth shares a field with array layer count for 2D arrays.
-		textureInfo.layer_count_or_depth = static_cast<Uint32>(grid.size.z);
+		textureInfo.width = static_cast<Uint32>(atlasSize.x);
+		textureInfo.height = static_cast<Uint32>(atlasSize.y);
+		// Depth shares a field with array layer count for 2D arrays
+		textureInfo.layer_count_or_depth = static_cast<Uint32>(atlasSize.z);
 		textureInfo.num_levels = 1;
 
 		voxelTexture = SDL_CreateGPUTexture(gpuDevice, &textureInfo);
 
 		if (voxelTexture == nullptr)
 		{
-			SOLAR_LOG_ERR(RENDER, "Failed to create voxel texture: {}", SDL_GetError());
+			SOLAR_LOG_ERR(RENDER, "Failed to create voxel atlas: {}", SDL_GetError());
 			return Error::RENDERER_FAILURE;
 		}
-
-		voxelGridSize = grid.size;
-
-		SDL_GPUTransferBufferCreateInfo transferInfo{};
-		transferInfo.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
-		transferInfo.size = static_cast<Uint32>(grid.materials.size());
-
-		SDL_GPUTransferBuffer* transferBuffer = SDL_CreateGPUTransferBuffer(gpuDevice, &transferInfo);
-
-		if (transferBuffer == nullptr)
-		{
-			SOLAR_LOG_ERR(RENDER, "Failed to create transfer buffer: {}", SDL_GetError());
-			return Error::RENDERER_FAILURE;
-		}
-
-		void* mapped = SDL_MapGPUTransferBuffer(gpuDevice, transferBuffer, false);
-
-		if (mapped == nullptr)
-		{
-			SOLAR_LOG_ERR(RENDER, "Failed to map transfer buffer: {}", SDL_GetError());
-			SDL_ReleaseGPUTransferBuffer(gpuDevice, transferBuffer);
-			return Error::RENDERER_FAILURE;
-		}
-
-		SDL_memcpy(mapped, grid.materials.data(), grid.materials.size());
-		SDL_UnmapGPUTransferBuffer(gpuDevice, transferBuffer);
 
 		SDL_GPUCommandBuffer* commandBuffer = SDL_AcquireGPUCommandBuffer(gpuDevice);
 
 		if (commandBuffer == nullptr)
 		{
 			SOLAR_LOG_ERR(RENDER, "Failed to acquire command buffer for upload: {}", SDL_GetError());
-			SDL_ReleaseGPUTransferBuffer(gpuDevice, transferBuffer);
 			return Error::RENDERER_FAILURE;
 		}
 
-		SDL_GPUTextureTransferInfo source{};
-		source.transfer_buffer = transferBuffer;
-		source.offset = 0;
+		voxelPalette = voxel::Palette{};
 
-		SDL_GPUTextureRegion destination{};
-		destination.texture = voxelTexture;
-		destination.w = static_cast<Uint32>(grid.size.x);
-		destination.h = static_cast<Uint32>(grid.size.y);
-		destination.d = static_cast<Uint32>(grid.size.z);
-
+		SDL_GPUTransferBuffer* transferBuffers[maxSceneModels]{};
 		SDL_GPUCopyPass* copyPass = SDL_BeginGPUCopyPass(commandBuffer);
-		SDL_UploadToGPUTexture(copyPass, &source, &destination, false);
-		SDL_EndGPUCopyPass(copyPass);
 
+		Error result = Error::NONE;
+
+		for (int index = 0; index < in_count && result == Error::NONE; ++index)
+		{
+			const VoxelModel& model = in_models[index];
+			const voxel::VoxelGrid& grid = *model.grid;
+			const int base = paletteBases[index];
+
+			for (size_t entry = 1; entry + base < voxel::paletteSize; ++entry)
+			{
+				voxelPalette.colours[entry + base] = model.palette->colours[entry];
+			}
+
+			SDL_GPUTransferBufferCreateInfo transferInfo{};
+			transferInfo.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
+			transferInfo.size = static_cast<Uint32>(grid.materials.size());
+
+			transferBuffers[index] = SDL_CreateGPUTransferBuffer(gpuDevice, &transferInfo);
+
+			if (transferBuffers[index] == nullptr)
+			{
+				SOLAR_LOG_ERR(RENDER, "Failed to create transfer buffer: {}", SDL_GetError());
+				result = Error::RENDERER_FAILURE;
+				break;
+			}
+
+			uint8_t* mapped = static_cast<uint8_t*>(
+				SDL_MapGPUTransferBuffer(gpuDevice, transferBuffers[index], false)
+			);
+
+			if (mapped == nullptr)
+			{
+				SOLAR_LOG_ERR(RENDER, "Failed to map transfer buffer: {}", SDL_GetError());
+				result = Error::RENDERER_FAILURE;
+				break;
+			}
+
+			for (size_t voxelIndex = 0; voxelIndex < grid.materials.size(); ++voxelIndex)
+			{
+				const uint8_t material = grid.materials[voxelIndex];
+
+				mapped[voxelIndex] = material == 0
+					? 0
+					: static_cast<uint8_t>(material + base);
+			}
+
+			SDL_UnmapGPUTransferBuffer(gpuDevice, transferBuffers[index]);
+
+			SDL_GPUTextureTransferInfo source{};
+			source.transfer_buffer = transferBuffers[index];
+
+			SDL_GPUTextureRegion destination{};
+			destination.texture = voxelTexture;
+			destination.z = static_cast<Uint32>(loadedModels[index].atlasOffset.z);
+			destination.w = static_cast<Uint32>(grid.size.x);
+			destination.h = static_cast<Uint32>(grid.size.y);
+			destination.d = static_cast<Uint32>(grid.size.z);
+
+			SDL_UploadToGPUTexture(copyPass, &source, &destination, false);
+		}
+
+		SDL_EndGPUCopyPass(copyPass);
 		SDL_SubmitGPUCommandBuffer(commandBuffer);
 
-		// Safe to release immediately: SDL keeps it alive until the copy completes.
-		SDL_ReleaseGPUTransferBuffer(gpuDevice, transferBuffer);
+		// Safe to release immediately: SDL keeps each alive until its copy completes
+		for (SDL_GPUTransferBuffer* transferBuffer : transferBuffers)
+		{
+			if (transferBuffer != nullptr)
+			{
+				SDL_ReleaseGPUTransferBuffer(gpuDevice, transferBuffer);
+			}
+		}
+
+		if (result != Error::NONE)
+		{
+			loadedModelCount = 0;
+			return result;
+		}
+
+		loadedModelCount = in_count;
+
+		SOLAR_LOG_INFO(
+			RENDER,
+			"Uploaded {} models into a {}x{}x{} atlas using {} palette entries",
+			in_count, atlasSize.x, atlasSize.y, atlasSize.z, paletteUsed
+		);
 
 		return Error::NONE;
+	}
+	SceneData Renderer::MakeSceneData(const VoxelInstance* in_instances, int in_instanceCount) const
+	{
+		SceneData data;
+
+		for (int index = 0; index < loadedModelCount; ++index)
+		{
+			const LoadedModel& model = loadedModels[index];
+
+			data.modelOffset[index] = Vec4(model.atlasOffset, model.voxelSize);
+			data.modelSize[index] = Vec4(model.size, 0.0f);
+		}
+
+		const int count = SDL_min(in_instanceCount, maxSceneInstances);
+
+		for (int index = 0; index < count; ++index)
+		{
+			const VoxelInstance& instance = in_instances[index];
+
+			// Clamped rather than rejected, so a bad index draws the first model instead of
+			// reading past the end of the array in the shader
+			const int model = glm::clamp(instance.model, 0, SDL_max(loadedModelCount - 1, 0));
+
+			data.instanceTransform[index] = Vec4(instance.position, static_cast<float>(model));
+
+			// Taken once here rather than per pixel, which is the only reason the yaw is not
+			// simply handed over as an angle. The scale is floored rather than trusted, since a
+			// zero would collapse the model to nothing and then divide by it
+			data.instanceRotation[index] = Vec4(
+				glm::sin(instance.yaw),
+				glm::cos(instance.yaw),
+				glm::max(instance.scale, 0.0001f),
+				0.0f
+			);
+		}
+
+		data.counts.x = static_cast<float>(count);
+
+		return data;
 	}
 
 	bool Renderer::EnsureSceneTexture(int in_width, int in_height)
@@ -449,8 +591,12 @@ namespace solar
 		return true;
 	}
 
-	void Renderer::Render(const Camera& in_camera, DebugUiContext& inout_debugUi)
-	{
+	void Renderer::Render(
+		const Camera& in_camera,
+		const VoxelInstance* in_instances,
+		int in_instanceCount,
+		DebugUiContext& inout_debugUi
+	) {
 		SDL_GPUCommandBuffer* commandBuffer = SDL_AcquireGPUCommandBuffer(gpuDevice);
 
 		if (commandBuffer == nullptr)
@@ -535,14 +681,16 @@ namespace solar
 			// pixels means they differ slightly, and the rays must match what is
 			// actually being rendered into.
 			const float sceneAspect = static_cast<float>(sceneWidth) / static_cast<float>(sceneHeight);
-			const CameraData cameraData = MakeCameraData(in_camera, sceneAspect, sceneHeight, voxelGridSize, shading);
+			const CameraData cameraData = MakeCameraData(in_camera, sceneAspect, sceneHeight, shading);
 
-			const LightData lightData = MakeLightData(lights);
+			const EnvironmentData environmentData = MakeEnvironmentData(lights, atmosphere);
+			const SceneData sceneData = MakeSceneData(in_instances, in_instanceCount);
 
 			SDL_PushGPUFragmentUniformData(commandBuffer, 0, &cameraData, sizeof(cameraData));
 			SDL_PushGPUFragmentUniformData(commandBuffer, 1, voxelPalette.colours.data(),
 				static_cast<Uint32>(voxelPalette.colours.size() * sizeof(Vec4)));
-			SDL_PushGPUFragmentUniformData(commandBuffer, 2, &lightData, sizeof(lightData));
+			SDL_PushGPUFragmentUniformData(commandBuffer, 2, &environmentData, sizeof(environmentData));
+			SDL_PushGPUFragmentUniformData(commandBuffer, 3, &sceneData, sizeof(sceneData));
 
 			SDL_BindGPUGraphicsPipeline(scenePass, graphicsPipeline);
 			SDL_BindGPUFragmentStorageTextures(scenePass, 0, &voxelTexture, 1);

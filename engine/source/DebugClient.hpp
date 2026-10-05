@@ -1,10 +1,12 @@
-#pragma once
+﻿#pragma once
 
 #include "solar/core/DebugUiHook.hpp"
 #include "solar/core/Error.hpp"
+#include "solar/render/AtmosphereSettings.hpp"
 #include "solar/render/Camera.hpp"
 #include "solar/render/LightSettings.hpp"
 #include "solar/render/ShadingSettings.hpp"
+#include "solar/render/VoxelModel.hpp"
 
 namespace solar
 {
@@ -26,16 +28,29 @@ namespace solar
 		void Update(Window& inout_window, Renderer& inout_renderer, float in_deltaTime);
 
 		const Camera& GetCamera() const { return camera; }
+
+		const VoxelInstance* GetInstances() const { return instances; }
+		int GetInstanceCount() const { return instanceCount; }
 		DebugUiContext& GetDebugUi() { return debugUi; }
 
 	private:
 		void UpdateFlyCamera(Window& inout_window, float in_deltaTime);
 		void UpdateSelection(Renderer& inout_renderer);
 
+		// Uploads the selected model and the reference figure, then places both. Called again
+		// whenever the panel picks a different model or density
+		[[nodiscard]] Error LoadScene(Renderer& inout_renderer);
+
 		Camera camera;
 		ShadingSettings shading;
 		LightSettings lights;
+		AtmosphereSettings atmosphere;
 		DebugUiContext debugUi;
+
+		// The subject is whichever test model the panel has selected, plus a figure for human
+		// scale and two Menger sponges of a known size to shade against
+		VoxelInstance instances[4];
+		int instanceCount = 0;
 
 		int modelIndex = 0;
 		int densityIndex = 0;

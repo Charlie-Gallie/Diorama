@@ -11,3 +11,6 @@
 # Per-user CMake and debugger settings
 CMakeUserPresets.json
 launch.vs.json
+
+# Bytecode cached by the model generator scripts in tools/
+__pycache__/

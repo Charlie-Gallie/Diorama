@@ -2,6 +2,7 @@
 
 namespace solar
 {
+	struct AtmosphereSettings;
 	struct Camera;
 	struct CameraPreset;
 	struct LightSettings;
@@ -19,6 +20,8 @@ namespace solar
 
 		LightSettings* lights = nullptr;
 
+		AtmosphereSettings* atmosphere = nullptr;
+
 		// Indices into modelNames and densityNames, applied by the engine on change
 		int* modelIndex = nullptr;
 		int* densityIndex = nullptr;
@@ -35,9 +38,8 @@ namespace solar
 		int sceneWidth = 0;
 		int sceneHeight = 0;
 
-		// World units are arbitrary - the scene shader normalises a model so its
-		// longest axis spans -1..1 - so the panel needs this to report metres
-		float metresPerUnit = 1.0f;
+		// Voxels per metre of whatever the panel has selected, for the framing readout
+		float density = 0.0f;
 	};
 
 	using DebugUiCallback = void(*)(DebugUiContext& inout_context);

@@ -21,24 +21,23 @@ namespace solar
 		float keyElevation = glm::radians(53.0f);
 
 		// Warm, standing in for the sun. The only term the shadow ray cuts
-		Vec3 keyColour = { 1.0f, 0.86f, 0.68f };
+		Vec3 keyColour = { 0.8f, 0.75f, 0.70f };
 		float keyIntensity = 1.0f;
 
 		// Cool, and the upper end of the hemisphere the ambient is taken from
-		Vec3 skyColour = { 0.35f, 0.45f, 0.65f };
-		float skyIntensity = 0.35f;
+		Vec3 skyColour = { 0.53f, 0.60f, 0.86f };
+		float skyIntensity = 0.50f;
 
 		// Bounce off the ground, so it is tinted by whatever is down there and arrives from below.
 		// A vertical surface sits exactly halfway along the hemisphere, so this is half of all the
 		// ambient anything upright receives - at the weak values it started with, the side of a
 		// car read darker than the floor it stood on.
 		//
-		// Cool and near neutral rather than warm, matching the pale floor the test scenes stand
-		// on. Still less blue than the sky so up and down stay distinguishable. A world of soil
-		// and grass would want this warm again, which is the argument for eventually taking it
-		// from whatever is actually underneath rather than from a constant
-		Vec3 groundColour = { 0.26f, 0.28f, 0.32f };
-		float groundIntensity = 0.35f;
+		// Green rather than blue, so up and down stay distinguishable where the sky is doing most
+		// of the ambient work. It no longer matches the grey test floor, which is the argument for
+		// eventually taking it from whatever is actually underneath rather than from a constant
+		Vec3 groundColour = { 0.60f, 0.68f, 0.65f };
+		float groundIntensity = 0.20f;
 
 		// What the ambient falls to where occlusion is total. Not zero, or a fully enclosed
 		// crevice goes pure black and loses its material

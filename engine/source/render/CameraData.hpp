@@ -14,18 +14,16 @@ namespace solar
 		Vec4 rightAndAspect = { 1.0f, 0.0f, 0.0f, 1.0f }; // xyz right, w width/height
 		Vec4 up = { 0.0f, 1.0f, 0.0f, 0.0f };
 		Vec4 forward = { 0.0f, 0.0f, -1.0f, 0.0f };
-		Vec4 gridSize = { 0.0f, 0.0f, 0.0f, 0.0f }; // xyz voxel grid dimensions
 		Vec4 shadingA = { 0.0f, 0.0f, 0.0f, 0.0f }; // normal radius, normal fade, axis tint, smooth normals on
 		Vec4 shadingB = { 0.0f, 0.0f, 0.0f, 0.0f }; // concavity guard, pixel angle, spare, spare
 	};
 
-	static_assert(sizeof(CameraData) == 112, "CameraData must match the shader cbuffer layout");
+	static_assert(sizeof(CameraData) == 96, "CameraData must match the shader cbuffer layout");
 
 	inline CameraData MakeCameraData(
 		const Camera& in_camera,
 		float in_aspect,
 		int in_targetHeight,
-		const IVec3& in_gridSize,
 		const ShadingSettings& in_shading
 	) {
 		const CameraBasis basis = GetCameraBasis(in_camera);
@@ -39,7 +37,6 @@ namespace solar
 		data.rightAndAspect = Vec4(basis.right, in_aspect);
 		data.up = Vec4(basis.up, 0.0f);
 		data.forward = Vec4(basis.forward, 0.0f);
-		data.gridSize = Vec4(in_gridSize, 0.0f);
 
 		data.shadingA = Vec4(
 			in_shading.normalRadius,

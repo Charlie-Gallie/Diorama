@@ -2,6 +2,7 @@
 
 #include "solar/core/DebugUiHook.hpp"
 #include "solar/core/Log.hpp"
+#include "solar/render/AtmosphereSettings.hpp"
 #include "solar/render/Camera.hpp"
 #include "solar/render/LightSettings.hpp"
 #include "solar/render/ShadingSettings.hpp"
@@ -17,8 +18,7 @@ namespace solar::devtools
 		constexpr float panelWidth = 340.0f;
 		constexpr float buttonWidth = 150.0f;
 
-		// Only used to report how many voxels land in a pixel at the current
-		// framing, so it is a readout and not tied to which model is loaded.
+		// Reported alongside whatever is loaded, so a density can be judged before switching to it
 		constexpr int reportedDensities[] = { 50, 40, 30, 20, 10 };
 
 		void DrawPresets(DebugUiContext& inout_context, Camera& inout_camera)
@@ -44,7 +44,7 @@ namespace solar::devtools
 			}
 		}
 
-		void DrawTransform(Camera& inout_camera, float in_metresPerUnit)
+		void DrawTransform(Camera& inout_camera)
 		{
 			// Edited in degrees because that is how the values are talked about, and
 			// converted back only when they actually change.
@@ -67,19 +67,14 @@ namespace solar::devtools
 				inout_camera.fovY = glm::radians(fovYDegrees);
 			}
 
-			Vec3 positionMetres = inout_camera.position * in_metresPerUnit;
-
-			if (ImGui::DragFloat3("Position", &positionMetres.x, 0.05f, 0.0f, 0.0f, "%.2f m"))
-			{
-				inout_camera.position = positionMetres / in_metresPerUnit;
-			}
+			ImGui::DragFloat3("Position", &inout_camera.position.x, 0.05f, 0.0f, 0.0f, "%.2f m");
 		}
 
 		void DrawFraming(const DebugUiContext& in_context, const Camera& in_camera)
 		{
-			// Distance to the origin, which is where the presets aim and roughly the
-			// middle of the test scene, so the numbers describe what is being looked at.
-			const float focusDistance = glm::length(in_camera.position) * in_context.metresPerUnit;
+			// Distance to the origin, which is where the presets aim and where the subject stands,
+			// so the numbers describe what is being looked at
+			const float focusDistance = glm::length(in_camera.position);
 			const float viewMetres = 2.0f * focusDistance * glm::tan(in_camera.fovY * 0.5f);
 
 			ImGui::Text("Focus distance   %6.2f m", focusDistance);
@@ -104,7 +99,10 @@ namespace solar::devtools
 			{
 				const float voxelsPerPixel = density / pixelsPerMetre;
 
-				ImGui::Text("  %2d vox/m   %5.2f  %s",
+				// A marker beside whichever one is actually loaded, so the row that describes what is
+				// on screen is not lost among the others
+				ImGui::Text("%s %2d vox/m   %5.2f  %s",
+					density == static_cast<int>(in_context.density) ? ">" : " ",
 					density,
 					voxelsPerPixel,
 					voxelsPerPixel > 1.05f ? "(finer than the screen)"
@@ -168,6 +166,22 @@ namespace solar::devtools
 			ImGui::DragFloat("Exposure", &inout_lights.exposure, 0.01f, 0.05f, 8.0f, "%.2f");
 		}
 
+		void DrawAtmosphere(AtmosphereSettings& inout_atmosphere)
+		{
+			ImGui::ColorEdit3("Sky horizon", &inout_atmosphere.skyHorizon.x, ImGuiColorEditFlags_Float);
+			ImGui::ColorEdit3("Sky zenith", &inout_atmosphere.skyZenith.x, ImGuiColorEditFlags_Float);
+
+			ImGui::DragFloat("Fog density", &inout_atmosphere.fogDensity, 0.001f, 0.0f, 0.5f, "%.4f");
+
+			ImGui::Checkbox("Ground plane", &inout_atmosphere.groundEnabled);
+
+			ImGui::BeginDisabled(inout_atmosphere.groundEnabled == false);
+			ImGui::ColorEdit3("Ground light", &inout_atmosphere.groundLight.x, ImGuiColorEditFlags_Float);
+			ImGui::ColorEdit3("Ground dark", &inout_atmosphere.groundDark.x, ImGuiColorEditFlags_Float);
+			ImGui::DragFloat("Ground tile", &inout_atmosphere.groundTileMetres, 0.05f, 0.1f, 32.0f, "%.2f m");
+			ImGui::EndDisabled();
+		}
+
 		void DrawModel(DebugUiContext& inout_context)
 		{
 			for (int index = 0; index < inout_context.modelCount; ++index)
@@ -198,9 +212,7 @@ namespace solar::devtools
 		// the current view, so a setting worth keeping can be copied out or logged.
 		void DrawSettingsText(const DebugUiContext& in_context, const Camera& in_camera)
 		{
-			const float metresPerUnit = in_context.metresPerUnit;
-			const Vec3 positionMetres = in_camera.position * metresPerUnit;
-			const float focusDistance = glm::length(in_camera.position) * metresPerUnit;
+			const float focusDistance = glm::length(in_camera.position);
 			const float viewMetres = 2.0f * focusDistance * glm::tan(in_camera.fovY * 0.5f);
 
 			const ShadingSettings shading = in_context.shading != nullptr
@@ -222,8 +234,7 @@ namespace solar::devtools
 			char text[1024];
 
 			std::snprintf(text, sizeof(text),
-				"position   %.3f, %.3f, %.3f  units\n"
-				"           %.2f, %.2f, %.2f  metres\n"
+				"position   %.2f, %.2f, %.2f  metres\n"
 				"yaw %.1f deg   pitch %.1f deg   fovY %.1f deg\n"
 				"vertical view %.2f m at %.2f m   %s vox/m\n"
 				"%s   radius %.2f   smooth above %.2f   axis tint %.2f\n"
@@ -233,7 +244,6 @@ namespace solar::devtools
 				"occlusion floor %.2f   exposure %.2f\n"
 				"MakeOrbitCamera(target, %.1ff, %.1ff, %.3ff, %.1ff)",
 				in_camera.position.x, in_camera.position.y, in_camera.position.z,
-				positionMetres.x, positionMetres.y, positionMetres.z,
 				glm::degrees(in_camera.yaw), glm::degrees(in_camera.pitch), glm::degrees(in_camera.fovY),
 				viewMetres, focusDistance, densityName,
 				shading.smoothNormals ? "smooth normals" : "flat normals",
@@ -293,7 +303,7 @@ namespace solar::devtools
 		ImGui::PopStyleColor();
 
 		ImGui::SeparatorText("Transform");
-		DrawTransform(camera, inout_context.metresPerUnit);
+		DrawTransform(camera);
 
 		ImGui::SeparatorText("Framing");
 		DrawFraming(inout_context, camera);
@@ -308,6 +318,12 @@ namespace solar::devtools
 		{
 			ImGui::SeparatorText("Lights");
 			DrawLights(*inout_context.lights);
+		}
+
+		if (inout_context.atmosphere != nullptr)
+		{
+			ImGui::SeparatorText("Atmosphere");
+			DrawAtmosphere(*inout_context.atmosphere);
 		}
 
 		if (inout_context.modelIndex != nullptr && inout_context.modelNames != nullptr)

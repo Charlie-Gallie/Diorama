@@ -101,7 +101,12 @@ namespace solar
 
 			// TODO: pass accumulator / fixedDeltaTime as the interpolation alpha once
 			// there is anything with a previous and current transform to blend.
-			renderer.Render(debugClient.GetCamera(), debugClient.GetDebugUi());
+			renderer.Render(
+				debugClient.GetCamera(),
+				debugClient.GetInstances(),
+				debugClient.GetInstanceCount(),
+				debugClient.GetDebugUi()
+			);
 		}
 
 		return 0;

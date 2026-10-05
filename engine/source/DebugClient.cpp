@@ -16,27 +16,47 @@ namespace solar
 		constexpr float minPitch = glm::radians(-89.9f);
 		constexpr float maxPitch = glm::radians(89.9f);
 
-		// The scene shader normalises a model so its longest axis spans -1..1, so world units
-		// depend on what is loaded. The test models are 6.2 m and 4.3 m along that axis, so one
-		// unit is a little over 3 m. We only use this to talk about the camera in metres, so an
-		// approximation is fine.
-		constexpr float metresPerUnit = 3.1f;
+		// Metres per second. World units are metres now, so these need no conversion
+		constexpr float walkSpeed = 4.0f;
+		constexpr float fastSpeed = 16.0f;
 
-		constexpr float walkSpeedMetres = 4.0f;
-		constexpr float fastSpeedMetres = 16.0f;
+		// Roughly chest height on the subject, which is what the presets look at
+		constexpr Vec3 sceneTarget = { 0.0f, 0.9f, 0.0f };
 
-		// Roughly the middle of the shapes scene, a little above the floor
-		constexpr Vec3 sceneTarget = { 0.0f, -0.11f, 0.0f };
+		// Stood clear of whatever the subject is rather than at a fixed spot, because the subjects
+		// are different sizes and the point of the figure is to be beside one, not inside it
+		constexpr float figureClearance = 0.9f;
+		constexpr float figureDepth = 0.4f;
+		constexpr float figureVoxelSize = 1.0f / 40.0f;
+		constexpr const char* figurePath = "assets/models/test/figure_40.vox";
 
-		// The blue sphere on its front row, for looking at one object closely
-		constexpr Vec3 sphereTarget = { -0.74f, -0.11f, 0.24f };
+		// Debug blocks of a known size, kept in the scene because a shape that is corners and
+		// holes at several scales at once is where shading problems show up first.
+		//
+		// Uploaded once as a 1 m cube and instanced twice, the second at half scale. One voxel
+		// per Menger cell means iteration 3 is 27 across whatever it fills, so the two end up at
+		// 27 and 54 voxels per metre from the same grid
+		constexpr const char* mengerPath = "assets/models/test/menger_3.vox";
+		constexpr float mengerVoxelSize = 1.0f / 27.0f;
+		constexpr float mengerSmallScale = 0.5f;
+
+		// Clear of the subject on the opposite side to the figure, with the small one set forward
+		// of the large one rather than further out, so both stay in a default framing
+		constexpr float mengerClearance = 1.0f;
+		constexpr Vec3 mengerSmallOffset = { -0.15f, 0.0f, 1.05f };
+
+		// Everything here is hard coded because there is no scene description yet, which is the
+		// point at which these stop being lists. There are fewer models than instances because
+		// the two sponges share one
+		constexpr int sceneModelCount = 3;
+		constexpr int sceneInstanceCount = 4;
 
 		constexpr int cameraPresetCount = 6;
 		constexpr int modelCount = 2;
 
-		// Each model carries its own densities because a .vox axis can't go over 256. The shapes
-		// scene is 6.2 m along its longest axis so it can't do 50 voxels per metre, but the car
-		// at 4.3 m has room for it.
+		// Each model carries its own densities because a .vox axis cannot go over 256. The shapes
+		// scene is 6.2 m along its longest axis so it cannot do 50 voxels per metre, but the car
+		// at 4.3 m has room for it
 		constexpr int maxDensityCount = 5;
 
 		constexpr const char* modelNames[modelCount] = { "Shapes", "Car" };
@@ -45,6 +65,13 @@ namespace solar
 		constexpr const char* densityNames[modelCount][maxDensityCount] = {
 			{ "40", "30", "20", "10", nullptr },
 			{ "50", "40", "30", "20", "10" }
+		};
+
+		// The same numbers again as values, because voxel size is what the renderer needs and a
+		// label is what the panel needs
+		constexpr int densityValues[modelCount][maxDensityCount] = {
+			{ 40, 30, 20, 10, 0 },
+			{ 50, 40, 30, 20, 10 }
 		};
 
 		constexpr const char* modelPaths[modelCount][maxDensityCount] = {
@@ -64,10 +91,10 @@ namespace solar
 			}
 		};
 
-		// Presets are described by the vertical extent they frame in metres, because that's what
-		// we're actually choosing. The distance then falls out of it and the field of view.
-		// A narrow field of view from a long way back is how we get the near-orthographic look
-		// without an orthographic projection.
+		// Presets are described by the vertical extent they frame, because that is what is actually
+		// being chosen. The distance then falls out of it and the field of view. A narrow field of
+		// view from a long way back is how the near-orthographic look is reached without an
+		// orthographic projection
 		Camera MakeViewPreset(
 			const Vec3& in_target,
 			float in_yawDegrees,
@@ -75,47 +102,27 @@ namespace solar
 			float in_viewMetres,
 			float in_fovYDegrees
 		) {
-			const float distance = OrbitDistanceForExtent(
-				in_viewMetres / metresPerUnit,
-				glm::radians(in_fovYDegrees)
-			);
+			const float distance = OrbitDistanceForExtent(in_viewMetres, glm::radians(in_fovYDegrees));
 
 			return MakeOrbitCamera(in_target, in_yawDegrees, in_pitchDegrees, distance, in_fovYDegrees);
 		}
 
-		// Built on first use rather than at namespace scope, because the angles go through sin
-		// and cos so they can't be a constant expression. The targets are in world units and
-		// assume the test models' proportions.
+		// Built on first use rather than at namespace scope, because the angles go through sin and
+		// cos so they cannot be a constant expression
 		const CameraPreset* CameraPresets()
 		{
 			static const CameraPreset presets[cameraPresetCount] = {
-				{ "Gameplay",      "9 m of height in view, 30 deg",   MakeViewPreset(sceneTarget,  45.0f, -35.0f,  9.0f, 30.0f) },
-				{ "Gameplay wide", "18 m of height in view, 30 deg",  MakeViewPreset(sceneTarget,  45.0f, -35.0f, 18.0f, 30.0f) },
-				{ "Near ortho",    "9 m framed from far back, 6 deg", MakeViewPreset(sceneTarget,  45.0f, -35.0f,  9.0f,  6.0f) },
-				{ "Steep",         "7 m, pitched down for indoors",   MakeViewPreset(sceneTarget,  45.0f, -58.0f,  7.0f, 30.0f) },
-				{ "Prop close-up", "2 m, on the blue sphere",         MakeViewPreset(sphereTarget, 25.0f, -18.0f,  2.0f, 35.0f) },
-				{ "Front",         "5 m, flat on for silhouettes",    MakeViewPreset(sceneTarget,   0.0f,  -8.0f,  5.0f, 25.0f) }
+				{ "Gameplay",      "9 m of height in view, 30 deg",   MakeViewPreset(sceneTarget, 45.0f, -35.0f,  9.0f, 30.0f) },
+				{ "Gameplay wide", "18 m of height in view, 30 deg",  MakeViewPreset(sceneTarget, 45.0f, -35.0f, 18.0f, 30.0f) },
+				{ "Near ortho",    "9 m framed from far back, 6 deg", MakeViewPreset(sceneTarget, 45.0f, -35.0f,  9.0f,  6.0f) },
+				{ "Steep",         "7 m, pitched down for indoors",   MakeViewPreset(sceneTarget, 45.0f, -58.0f,  7.0f, 30.0f) },
+				{ "Eye level",     "3 m, stood on the ground",        MakeViewPreset(sceneTarget, 24.0f,  -4.0f,  3.0f, 32.0f) },
+				{ "Front",         "5 m, flat on for silhouettes",    MakeViewPreset(sceneTarget,  0.0f,  -8.0f,  5.0f, 25.0f) }
 			};
 
 			return presets;
 		}
-
-		[[nodiscard]] Error LoadModel(Renderer& inout_renderer, const char* in_path)
-		{
-			voxel::VoxelGrid grid;
-			voxel::Palette palette;
-
-			const Error importError = voxel::ImportVoxFile(in_path, grid, palette);
-
-			if (importError != Error::NONE)
-			{
-				return importError;
-			}
-
-			return inout_renderer.SetVoxelModel(grid, palette);
-		}
 	}
-
 	Error DebugClient::Initialize(Renderer& inout_renderer)
 	{
 		camera = CameraPresets()[0].camera;
@@ -123,21 +130,20 @@ namespace solar
 		debugUi.camera = &camera;
 		debugUi.shading = &shading;
 		debugUi.lights = &lights;
+		debugUi.atmosphere = &atmosphere;
 		debugUi.modelIndex = &modelIndex;
 		debugUi.densityIndex = &densityIndex;
 		debugUi.cameraPresets = CameraPresets();
 		debugUi.cameraPresetCount = cameraPresetCount;
 		debugUi.modelNames = modelNames;
 		debugUi.modelCount = modelCount;
-		debugUi.metresPerUnit = metresPerUnit;
 
-		// Load here rather than on the first Update, so a missing asset fails at startup with a
+		// Loaded here rather than on the first Update, so a missing asset fails at startup with a
 		// clear message instead of giving us a black first frame
-		const Error loadError = LoadModel(inout_renderer, modelPaths[modelIndex][densityIndex]);
+		const Error loadError = LoadScene(inout_renderer);
 
 		if (loadError != Error::NONE)
 		{
-			SOLAR_LOG_ERR(RENDER, "Failed to load {}", modelPaths[modelIndex][densityIndex]);
 			return loadError;
 		}
 
@@ -147,6 +153,72 @@ namespace solar
 		return Error::NONE;
 	}
 
+	Error DebugClient::LoadScene(Renderer& inout_renderer)
+	{
+		// A .vox file says nothing about how big a voxel is, so every density here comes from the
+		// code rather than from the data
+		const struct
+		{
+			const char* path;
+			float voxelSize;
+		} sources[sceneModelCount] = {
+			{ modelPaths[modelIndex][densityIndex], 1.0f / densityValues[modelIndex][densityIndex] },
+			{ figurePath, figureVoxelSize },
+			{ mengerPath, mengerVoxelSize }
+		};
+
+		// The grids have to outlive the upload, so they stay in scope until it has happened
+		voxel::VoxelGrid grids[sceneModelCount];
+		voxel::Palette palettes[sceneModelCount];
+		VoxelModel models[sceneModelCount];
+
+		for (int index = 0; index < sceneModelCount; ++index)
+		{
+			if (voxel::ImportVoxFile(sources[index].path, grids[index], palettes[index]) != Error::NONE)
+			{
+				SOLAR_LOG_ERR(CORE, "Failed to load {}", sources[index].path);
+				return Error::INVALID_DATA;
+			}
+
+			models[index].grid = &grids[index];
+			models[index].palette = &palettes[index];
+			models[index].voxelSize = sources[index].voxelSize;
+		}
+
+		const Error uploadError = inout_renderer.SetVoxelModels(models, sceneModelCount);
+
+		if (uploadError != Error::NONE)
+		{
+			return uploadError;
+		}
+
+		// Placed either side of whatever the subject is rather than at fixed spots, because the
+		// subjects are different sizes and the point of all of these is to be beside one
+		const float subjectHalfWidth = grids[0].size.x * models[0].voxelSize * 0.5f;
+		const float mengerX = subjectHalfWidth + mengerClearance;
+
+		instances[0] = { .position = { 0.0f, 0.0f, 0.0f }, .model = 0 };
+
+		instances[1] = {
+			.position = { -(subjectHalfWidth + figureClearance), 0.0f, figureDepth },
+			.yaw = glm::radians(-28.0f),
+			.model = 1
+		};
+
+		instances[2] = { .position = { mengerX, 0.0f, 0.2f }, .model = 2 };
+
+		// Turned and halved, because a cube is the one shape where both are obvious at a glance
+		instances[3] = {
+			.position = Vec3(mengerX, 0.0f, 0.0f) + mengerSmallOffset,
+			.yaw = glm::radians(25.0f),
+			.scale = mengerSmallScale,
+			.model = 2
+		};
+
+		instanceCount = sceneInstanceCount;
+
+		return Error::NONE;
+	}
 	void DebugClient::Update(Window& inout_window, Renderer& inout_renderer, float in_deltaTime)
 	{
 		// Latched so holding the key toggles once rather than every frame
@@ -160,13 +232,13 @@ namespace solar
 
 		smoothNormalsKeyWasDown = smoothNormalsKeyDown;
 
-		// Presets don't need latching because holding the key just keeps reapplying the same
-		// camera. The rest are panel only.
+		// Presets do not need latching because holding the key just keeps reapplying the same
+		// camera. The rest are panel only
 		if (input::IsKeyDown(input::Key::NUM_5)) { camera = CameraPresets()[0].camera; }
 		if (input::IsKeyDown(input::Key::NUM_6)) { camera = CameraPresets()[1].camera; }
 
-		// The same model resampled at several densities, so switching between them changes
-		// voxels per metre and nothing else
+		// The same model resampled at several densities, so switching between them changes voxels
+		// per metre and nothing else
 		if (input::IsKeyDown(input::Key::NUM_7)) { densityIndex = 0; }
 		if (input::IsKeyDown(input::Key::NUM_8)) { densityIndex = 1; }
 		if (input::IsKeyDown(input::Key::NUM_9)) { densityIndex = 2; }
@@ -177,8 +249,8 @@ namespace solar
 
 		inout_renderer.SetShadingSettings(shading);
 		inout_renderer.SetLightSettings(lights);
+		inout_renderer.SetAtmosphereSettings(atmosphere);
 	}
-
 	void DebugClient::UpdateFlyCamera(Window& inout_window, float in_deltaTime)
 	{
 		const bool wantsLook = input::IsMouseButtonDown(input::MouseButton::RIGHT);
@@ -205,11 +277,9 @@ namespace solar
 
 		const CameraBasis basis = GetCameraBasis(camera);
 
-		const float speedMetres = input::IsKeyDown(input::Key::LEFT_SHIFT)
-			? fastSpeedMetres
-			: walkSpeedMetres;
-
-		const float speed = speedMetres / metresPerUnit;
+		const float speed = input::IsKeyDown(input::Key::LEFT_SHIFT)
+			? fastSpeed
+			: walkSpeed;
 
 		Vec3 move = { 0.0f, 0.0f, 0.0f };
 
@@ -230,21 +300,20 @@ namespace solar
 
 	void DebugClient::UpdateSelection(Renderer& inout_renderer)
 	{
-		// Models don't all offer the same densities, so we tell the panel which list applies
-		// before it draws and keep the index inside it
+		// Models do not all offer the same densities, so the panel is told which list applies
+		// before it draws and the index is kept inside it
 		debugUi.densityNames = densityNames[modelIndex];
 		debugUi.densityCount = densityCounts[modelIndex];
 
 		densityIndex = glm::clamp(densityIndex, 0, densityCounts[modelIndex] - 1);
+		debugUi.density = static_cast<float>(densityValues[modelIndex][densityIndex]);
 
 		if (modelIndex == appliedModelIndex && densityIndex == appliedDensityIndex)
 		{
 			return;
 		}
 
-		const char* const path = modelPaths[modelIndex][densityIndex];
-
-		if (LoadModel(inout_renderer, path) == Error::NONE)
+		if (LoadScene(inout_renderer) == Error::NONE)
 		{
 			appliedModelIndex = modelIndex;
 			appliedDensityIndex = densityIndex;
@@ -254,8 +323,6 @@ namespace solar
 		}
 		else
 		{
-			SOLAR_LOG_ERR(RENDER, "Failed to load {}", path);
-
 			modelIndex = appliedModelIndex;
 			densityIndex = appliedDensityIndex;
 		}
