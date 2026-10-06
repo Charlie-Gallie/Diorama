@@ -52,20 +52,24 @@ def write_vox(path, size, voxels, palette):
 
     body = chunk(b"SIZE", struct.pack("<iii", sx, sy, sz))
 
-    xyzi = struct.pack("<i", len(voxels))
+    # bytearray rather than bytes, because += on bytes copies the whole buffer every time and
+    # turns a large model into minutes of quadratic copying
+    entry = struct.Struct("<BBBB")
+
+    xyzi = bytearray(struct.pack("<i", len(voxels)))
 
     for x, y, z, index in voxels:
-        xyzi += struct.pack("<BBBB", x, y, z, index)
+        xyzi += entry.pack(x, y, z, index)
 
-    body += chunk(b"XYZI", xyzi)
+    body += chunk(b"XYZI", bytes(xyzi))
 
-    rgba = b""
+    rgba = bytearray()
 
     for i in range(256):
         r, g, b, a = palette.entries[i] if i < len(palette.entries) else (0, 0, 0, 0)
-        rgba += struct.pack("<BBBB", r, g, b, a)
+        rgba += entry.pack(r, g, b, a)
 
-    body += chunk(b"RGBA", rgba)
+    body += chunk(b"RGBA", bytes(rgba))
 
     data = b"VOX " + struct.pack("<i", 150) + chunk(b"MAIN", b"", body)
 

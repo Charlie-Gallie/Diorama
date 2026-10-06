@@ -1,4 +1,4 @@
-#include "DebugClient.hpp"
+﻿#include "DebugClient.hpp"
 
 #include "solar/core/Filesystem.hpp"
 #include "solar/core/Log.hpp"
@@ -24,10 +24,6 @@ namespace solar
 		// Roughly chest height on the subject, which is what the presets look at
 		constexpr Vec3 sceneTarget = { 0.0f, 0.9f, 0.0f };
 
-		// Stood clear of whatever the subject is rather than at a fixed spot, because the subjects
-		// are different sizes and the point of the figure is to be beside one, not inside it
-		constexpr float figureClearance = 0.9f;
-		constexpr float figureDepth = 0.4f;
 		constexpr float figureVoxelSize = 1.0f / 40.0f;
 		constexpr const char* figurePath = "assets/models/test/figure_40.vox";
 
@@ -45,16 +41,20 @@ namespace solar
 		// immediate, rarely enough that the cost of asking the OS never matters
 		constexpr float hotReloadInterval = 0.25f;
 
-		// Clear of the subject on the opposite side to the figure, with the small one set forward
-		// of the large one rather than further out, so both stay in a default framing
-		constexpr float mengerClearance = 1.0f;
-		constexpr Vec3 mengerSmallOffset = { -0.15f, 0.0f, 1.05f };
+		// A mock-up of the block world design: a 6 m patch of 0.5 m terrain blocks whose voxel
+		// content is at the world density, with a hut, a tree, a path and a mound. Here to judge
+		// the design, not to stay
+		constexpr const char* patchPath = "assets/models/test/worldpatch.vox";
+		constexpr float patchVoxelSize = 1.0f / 40.0f;
+
+		// Its flat ground sits 1.5 m above the model's base, so this drops that onto y = 0
+		constexpr float patchBase = -1.5f;
 
 		// Everything here is hard coded because there is no scene description yet, which is the
 		// point at which these stop being lists. There are fewer models than instances because
 		// the two sponges share one
-		constexpr int sceneModelCount = 3;
-		constexpr int sceneInstanceCount = 4;
+		constexpr int sceneModelCount = 4;
+		constexpr int sceneInstanceCount = 5;
 
 		constexpr int cameraPresetCount = 6;
 		constexpr int modelCount = 2;
@@ -128,6 +128,7 @@ namespace solar
 			return presets;
 		}
 	}
+
 	Error DebugClient::Initialize(Renderer& inout_renderer)
 	{
 		camera = CameraPresets()[0].camera;
@@ -169,7 +170,8 @@ namespace solar
 		} sources[sceneModelCount] = {
 			{ modelPaths[modelIndex][densityIndex], 1.0f / densityValues[modelIndex][densityIndex] },
 			{ figurePath, figureVoxelSize },
-			{ mengerPath, mengerVoxelSize }
+			{ mengerPath, mengerVoxelSize },
+			{ patchPath, patchVoxelSize }
 		};
 
 		// Recorded before anything is read rather than after, so a file that fails to parse is not
@@ -212,29 +214,33 @@ namespace solar
 			return uploadError;
 		}
 
-		// Placed either side of whatever the subject is rather than at fixed spots, because the
-		// subjects are different sizes and the point of all of these is to be beside one
-		const float subjectHalfWidth = grids[0].size.x * models[0].voxelSize * 0.5f;
-		const float mengerX = subjectHalfWidth + mengerClearance;
 
-		instances[0] = { .position = { 0.0f, 0.0f, 0.0f }, .model = 0 };
+		// Terrain first, then everything standing on it. Positions are hand placed against the
+		// patch rather than derived, because the patch is a fixed mock-up and not a real scene
+		instances[0] = { .position = { 0.0f, patchBase, 0.0f }, .model = 3 };
 
-		instances[1] = {
-			.position = { -(subjectHalfWidth + figureClearance), 0.0f, figureDepth },
-			.yaw = glm::radians(-28.0f),
+		// Importing a .vox mirrors its depth axis as part of the Z-up to Y-up conversion, so the
+		// patch reads back to front against the layout in the generator. Everything below is in
+		// engine space and was placed by eye
+		// On the path, which runs across the middle of the patch
+		instances[1] = { .position = { 0.0f, 0.0f, 0.0f }, .yaw = glm::radians(5.0f), .model = 0 };
+
+		// Stood off the end of the car, between it and the hut
+		instances[2] = {
+			.position = { -2.2f, 0.0f, -0.9f },
+			.yaw = glm::radians(20.0f),
 			.model = 1
 		};
 
-		instances[2] = { .position = { mengerX, 0.0f, 0.2f }, .model = 2 };
+		instances[3] = { .position = { 2.2f, 0.0f, -1.0f }, .model = 2 };
 
 		// Turned and halved, because a cube is the one shape where both are obvious at a glance
-		instances[3] = {
-			.position = Vec3(mengerX, 0.0f, 0.0f) + mengerSmallOffset,
+		instances[4] = {
+			.position = { 2.6f, 0.0f, -2.0f },
 			.yaw = glm::radians(25.0f),
 			.scale = mengerSmallScale,
 			.model = 2
 		};
-
 		instanceCount = sceneInstanceCount;
 
 		return Error::NONE;

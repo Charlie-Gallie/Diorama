@@ -48,9 +48,9 @@ namespace solar
 		AtmosphereSettings atmosphere;
 		DebugUiContext debugUi;
 
-		// The subject is whichever test model the panel has selected, plus a figure for human
-		// scale and two Menger sponges of a known size to shade against
-		VoxelInstance instances[4];
+		// A patch of mock terrain, then whichever test model the panel has selected, a figure for
+		// human scale and two Menger sponges of a known size to shade against
+		VoxelInstance instances[5];
 		int instanceCount = 0;
 
 		// Every file the current scene was built from, so saving one in MagicaVoxel reloads it
@@ -65,7 +65,7 @@ namespace solar
 		int watchedCount = 0;
 		float sinceLastPoll = 0.0f;
 
-		int modelIndex = 0;
+		int modelIndex = 1;
 		int densityIndex = 0;
 
 		// Start unset so the first load always happens, instead of assuming the renderer was

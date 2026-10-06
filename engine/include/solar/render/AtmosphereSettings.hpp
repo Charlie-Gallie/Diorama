@@ -4,8 +4,8 @@
 
 namespace solar
 {
-	// The sky the camera sees, the ground it stands on and the air in between. Kept apart from
-	// LightSettings because these say what is drawn rather than what lights it - the ambient sky
+	// The sky the camera sees, the ground it stands on and the air in between.
+	// Kept apart from LightSettings because these say what is drawn rather than what lights it - the ambient sky
 	// term there is an average over the whole dome, which is not the colour of any part of it.
 	// Colours are linear, as everywhere else
 	struct AtmosphereSettings
@@ -19,8 +19,8 @@ namespace solar
 
 		bool groundEnabled = true;
 
-		Vec3 groundLight = { 0.33f, 0.32f, 0.30f };
-		Vec3 groundDark = { 0.27f, 0.27f, 0.26f };
+		Vec3 groundLight = { 0.10f, 0.17f, 0.06f };
+		Vec3 groundDark = { 0.08f, 0.13f, 0.05f };
 
 		// Paving slab sized
 		float groundTileMetres = 1.0f;
