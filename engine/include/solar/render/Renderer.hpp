@@ -80,10 +80,15 @@ namespace solar
 			IVec3 atlasOffset = { 0, 0, 0 };
 			IVec3 size = { 0, 0, 0 };
 			float voxelSize = 0.0f;
+
+			IVec3 coarseOffset = { 0, 0, 0 };
+			IVec3 coarseSize = { 0, 0, 0 };
 		};
 
-		// Every model shares one 3D texture, so a scene draws from a single binding
+		// Every model shares one 3D texture, so a scene draws from a single binding. The coarse
+		// texture is the same thing one cell per block of voxels, for skipping empty space
 		SDL_GPUTexture* voxelTexture = nullptr;
+		SDL_GPUTexture* coarseTexture = nullptr;
 		LoadedModel loadedModels[maxSceneModels];
 		int loadedModelCount = 0;
 

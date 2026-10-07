@@ -5,7 +5,7 @@ cbuffer CameraData : register(b0, space3)
 	float4 up;
 	float4 forward;
 	float4 shadingA; // x normal radius, y normal fade, z axis tint, w smooth normals on
-	float4 shadingB; // x concavity guard, y pixel angle at unit distance
+	float4 shadingB; // x concavity guard, y pixel angle at unit distance, z shadows on, w occlusion on
 };
 
 cbuffer PaletteData : register(b1, space3)
@@ -33,6 +33,7 @@ cbuffer SceneData : register(b3, space3)
 	float4 counts; // x instance count
 	float4 modelOffset[8]; // xyz atlas offset in voxels, w voxel size in metres
 	float4 modelSize[8]; // xyz size in voxels
+	float4 modelCoarse[8]; // xyz coarse atlas offset in cells, w voxels per cell
 	float4 instanceTransform[16]; // xyz position in metres, w model index
 	float4 instanceRotation[16]; // x sine of yaw, y cosine of yaw, z scale
 };
@@ -40,7 +41,14 @@ cbuffer SceneData : register(b3, space3)
 
 Texture3D<uint> voxels : register(t0, space2);
 
-static const int maxSteps = 768;
+// One texel per cell of voxels, non-zero if anything in that cell is solid. Lets a ray
+// cross empty space a cell at a time instead of a voxel at a time
+Texture3D<uint> coarseVoxels : register(t1, space2);
+
+// A ray crosses at most three cells per axis, so these only have to be generous enough for the
+// largest model. The fine bound is per coarse cell, not per ray
+static const int maxCoarseSteps = 256;
+static const int maxFineSteps = 64;
 
 struct PSInput
 {
@@ -88,6 +96,10 @@ struct Model
 	int3 offset;
 	int3 size;
 	float voxelSize;
+
+	int3 coarseOffset;
+	int3 coarseSize;
+	float coarseCell;
 };
 
 Model GetModel(int in_index)
@@ -96,6 +108,12 @@ Model GetModel(int in_index)
 	model.offset = (int3)modelOffset[in_index].xyz;
 	model.size = (int3)modelSize[in_index].xyz;
 	model.voxelSize = modelOffset[in_index].w;
+	model.coarseOffset = (int3)modelCoarse[in_index].xyz;
+	model.coarseCell = modelCoarse[in_index].w;
+
+	// Derived rather than passed, so there is one less number to keep in step with the renderer
+	const int cell = (int)model.coarseCell;
+	model.coarseSize = (model.size + cell - 1) / cell;
 
 	return model;
 }
@@ -151,6 +169,16 @@ uint SampleVoxel(Model in_model, int3 in_voxel)
 	}
 
 	return voxels.Load(int4(in_model.offset + in_voxel, 0));
+}
+
+uint SampleCoarse(Model in_model, int3 in_cell)
+{
+	if (any(in_cell < 0) || any(in_cell >= in_model.coarseSize))
+	{
+		return 0;
+	}
+
+	return coarseVoxels.Load(int4(in_model.coarseOffset + in_cell, 0));
 }
 
 // "Solidity" as a continuous field rather than per voxel
@@ -296,7 +324,81 @@ struct TraceResult
 	int3 voxel;
 };
 
-// Amanatides and Woo, in grid space where one voxel = one unit
+// Amanatides and Woo. The cells are whatever unit the caller hands it, which is what lets the
+// same walk serve both the coarse grid and the voxels inside it
+struct Walk
+{
+	int3 cell;
+	int3 step;
+	float3 tMax;
+	float3 tDelta;
+	float t;
+	float3 normal;
+};
+
+Walk BeginWalk(float3 in_origin, float3 in_direction, float in_tStart, float3 in_entryNormal)
+{
+	// Nudged off the boundary so floor cannot land on the neighbouring cell
+	const float start = in_tStart + 0.0001f;
+	const float3 entry = in_origin + in_direction * start;
+
+	Walk walk;
+	walk.cell = (int3)floor(entry);
+	walk.step = (int3)sign(in_direction);
+	walk.tDelta = 1.0f / abs(in_direction);
+	walk.t = in_tStart;
+	walk.normal = in_entryNormal;
+
+	const float3 boundary = float3(
+		in_direction.x > 0.0f ? walk.cell.x + 1 : walk.cell.x,
+		in_direction.y > 0.0f ? walk.cell.y + 1 : walk.cell.y,
+		in_direction.z > 0.0f ? walk.cell.z + 1 : walk.cell.z
+	);
+
+	walk.tMax = start + (boundary - entry) / in_direction;
+
+	return walk;
+}
+
+// Distance at which the ray leaves the cell it is currently in
+float WalkExit(Walk in_walk)
+{
+	return min(min(in_walk.tMax.x, in_walk.tMax.y), in_walk.tMax.z);
+}
+
+// The nearest boundary is the axis to cross, and the axis crossed is the face entered through,
+// so the normal comes out of the step for free
+void Advance(inout Walk io_walk)
+{
+	if (io_walk.tMax.x < io_walk.tMax.y && io_walk.tMax.x < io_walk.tMax.z)
+	{
+		io_walk.t = io_walk.tMax.x;
+		io_walk.cell.x += io_walk.step.x;
+		io_walk.tMax.x += io_walk.tDelta.x;
+		io_walk.normal = float3(-io_walk.step.x, 0.0f, 0.0f);
+	}
+	else if (io_walk.tMax.y < io_walk.tMax.z)
+	{
+		io_walk.t = io_walk.tMax.y;
+		io_walk.cell.y += io_walk.step.y;
+		io_walk.tMax.y += io_walk.tDelta.y;
+		io_walk.normal = float3(0.0f, -io_walk.step.y, 0.0f);
+	}
+	else
+	{
+		io_walk.t = io_walk.tMax.z;
+		io_walk.cell.z += io_walk.step.z;
+		io_walk.tMax.z += io_walk.tDelta.z;
+		io_walk.normal = float3(0.0f, 0.0f, -io_walk.step.z);
+	}
+}
+
+// Two levels: walk the coarse grid, and only step voxel by voxel inside a cell that holds
+// something. Air is what a voxel ray spends nearly all its time in, so skipping it a cell at a
+// time is most of the cost of a trace.
+//
+// Both levels are the same ray, so t carries between them untouched - the coarse grid is just
+// this one divided through by the cell size
 TraceResult TraceGrid(Model in_model, float3 in_origin, float3 in_direction, float in_tStart, float in_tEnd, float3 in_entryNormal)
 {
 	TraceResult result;
@@ -305,65 +407,55 @@ TraceResult TraceGrid(Model in_model, float3 in_origin, float3 in_direction, flo
 	result.t = in_tStart;
 	result.voxel = int3(0, 0, 0);
 
-	// Nudged off the boundary so floor cannot land on the neighbouring cell
-	const float tStart = in_tStart + 0.0001f;
-	const float3 entry = in_origin + in_direction * tStart;
+	const float3 coarseOrigin = in_origin / in_model.coarseCell;
+	const float3 coarseDirection = in_direction / in_model.coarseCell;
 
-	int3 voxel = (int3)floor(entry);
-	const int3 stepDirection = (int3)sign(in_direction);
-	const float3 tDelta = 1.0f / abs(in_direction);
+	Walk coarse = BeginWalk(coarseOrigin, coarseDirection, in_tStart, in_entryNormal);
 
-	const float3 boundary = float3(
-		in_direction.x > 0.0f ? voxel.x + 1 : voxel.x,
-		in_direction.y > 0.0f ? voxel.y + 1 : voxel.y,
-		in_direction.z > 0.0f ? voxel.z + 1 : voxel.z
-	);
-
-	float3 tMax = tStart + (boundary - entry) / in_direction;
-
-	for (int i = 0; i < maxSteps; ++i)
+	for (int cellStep = 0; cellStep < maxCoarseSteps; ++cellStep)
 	{
-		result.material = SampleVoxel(in_model, voxel);
-
-		if (result.material != 0)
+		if (coarse.t > in_tEnd)
 		{
-			result.voxel = voxel;
-			return result;
+			break;
 		}
 
-		// The nearest boundary is the axis to cross, and the axis crossed is the
-		// face entered through, so the normal comes out of the step for free
-		if (tMax.x < tMax.y && tMax.x < tMax.z)
+		const float cellExit = WalkExit(coarse);
+
+		if (SampleCoarse(in_model, coarse.cell) != 0)
 		{
-			if (tMax.x > in_tEnd) { break; }
-			result.t = tMax.x;
-			voxel.x += stepDirection.x;
-			tMax.x += tDelta.x;
-			result.normal = float3(-stepDirection.x, 0.0f, 0.0f);
+			const float fineEnd = min(cellExit, in_tEnd);
+
+			Walk fine = BeginWalk(in_origin, in_direction, max(coarse.t, in_tStart), coarse.normal);
+
+			for (int voxelStep = 0; voxelStep < maxFineSteps; ++voxelStep)
+			{
+				if (fine.t > fineEnd)
+				{
+					break;
+				}
+
+				result.material = SampleVoxel(in_model, fine.cell);
+
+				if (result.material != 0)
+				{
+					result.t = fine.t;
+					result.normal = fine.normal;
+					result.voxel = fine.cell;
+
+					return result;
+				}
+
+				Advance(fine);
+			}
 		}
-		else if (tMax.y < tMax.z)
-		{
-			if (tMax.y > in_tEnd) { break; }
-			result.t = tMax.y;
-			voxel.y += stepDirection.y;
-			tMax.y += tDelta.y;
-			result.normal = float3(0.0f, -stepDirection.y, 0.0f);
-		}
-		else
-		{
-			if (tMax.z > in_tEnd) { break; }
-			result.t = tMax.z;
-			voxel.z += stepDirection.z;
-			tMax.z += tDelta.z;
-			result.normal = float3(0.0f, 0.0f, -stepDirection.z);
-		}
+
+		Advance(coarse);
 	}
 
 	result.material = 0;
 
 	return result;
 }
-
 struct SceneHit
 {
 	bool hit;
@@ -482,7 +574,7 @@ float3 ShadeGround(float3 in_point, float in_distance)
 	const float3 normal = float3(0.0f, 1.0f, 0.0f);
 	float diffuse = saturate(keyDirection.y);
 
-	if (diffuse > 0.0f && IsInShadow(in_point, normal))
+	if (diffuse > 0.0f && shadingB.z > 0.5f && IsInShadow(in_point, normal))
 	{
 		diffuse = 0.0f;
 	}
@@ -523,12 +615,14 @@ float3 ShadeVoxel(SceneHit in_hit, float3 in_worldPoint)
 
 	float diffuse = saturate(dot(shadingNormal, keyDirection.xyz));
 
-	if (diffuse > 0.0f && IsInShadow(in_worldPoint, geometricNormal))
+	if (diffuse > 0.0f && shadingB.z > 0.5f && IsInShadow(in_worldPoint, geometricNormal))
 	{
 		diffuse = 0.0f;
 	}
 
-	const float occlusion = VoxelAmbientOcclusion(model, in_hit.gridPoint, in_hit.gridNormal);
+	const float occlusion = shadingB.w > 0.5f
+		? VoxelAmbientOcclusion(model, in_hit.gridPoint, in_hit.gridNormal)
+		: 1.0f;
 
 	// Sky light arrives from above and ground bounce from below, so the two are the ends of a
 	// hemisphere and the normal picks a point along it. This is what stops everything the key

@@ -29,6 +29,11 @@ namespace solar
 		// happen in the present pass instead.
 		constexpr SDL_GPUTextureFormat sceneFormat = SDL_GPU_TEXTUREFORMAT_R16G16B16A16_FLOAT;
 
+		// Voxels per coarse cell. Bigger skips further per step but overshoots more into cells that
+		// only just hold something; 8 is a reasonable middle and is the one number the shader and
+		// this file have to agree on, so it travels as a uniform rather than being written twice
+		constexpr int coarseCell = 16;
+
 		// Validation layers are expensive, so they are off in Shipping. NDEBUG is a
 		// stand-in until the SE_ feature flags exist: Debug and Development strip it,
 		// Shipping defines it.
@@ -37,6 +42,70 @@ namespace solar
 #else
 		constexpr bool enableGpuDebug = true;
 #endif
+
+		SDL_GPUTexture* CreateVoxelTexture(SDL_GPUDevice* in_gpuDevice, const IVec3& in_size)
+		{
+			SDL_GPUTextureCreateInfo info{};
+			info.type = SDL_GPU_TEXTURETYPE_3D;
+			info.format = SDL_GPU_TEXTUREFORMAT_R8_UINT;
+			info.usage = SDL_GPU_TEXTUREUSAGE_GRAPHICS_STORAGE_READ;
+			info.width = static_cast<Uint32>(in_size.x);
+			info.height = static_cast<Uint32>(in_size.y);
+			// Depth shares a field with array layer count for 2D arrays
+			info.layer_count_or_depth = static_cast<Uint32>(in_size.z);
+			info.num_levels = 1;
+
+			return SDL_CreateGPUTexture(in_gpuDevice, &info);
+		}
+
+		// Returns the transfer buffer rather than releasing it, because SDL only keeps it alive
+		// until the copy completes and the caller owns the command buffer that will do it
+		SDL_GPUTransferBuffer* UploadVoxels(
+			SDL_GPUDevice* in_gpuDevice,
+			SDL_GPUCopyPass* in_copyPass,
+			SDL_GPUTexture* in_texture,
+			const std::vector<uint8_t>& in_data,
+			const IVec3& in_size,
+			int in_offsetZ
+		) {
+			SDL_GPUTransferBufferCreateInfo transferInfo{};
+			transferInfo.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
+			transferInfo.size = static_cast<Uint32>(in_data.size());
+
+			SDL_GPUTransferBuffer* transferBuffer = SDL_CreateGPUTransferBuffer(in_gpuDevice, &transferInfo);
+
+			if (transferBuffer == nullptr)
+			{
+				SOLAR_LOG_ERR(RENDER, "Failed to create transfer buffer: {}", SDL_GetError());
+				return nullptr;
+			}
+
+			void* mapped = SDL_MapGPUTransferBuffer(in_gpuDevice, transferBuffer, false);
+
+			if (mapped == nullptr)
+			{
+				SOLAR_LOG_ERR(RENDER, "Failed to map transfer buffer: {}", SDL_GetError());
+				SDL_ReleaseGPUTransferBuffer(in_gpuDevice, transferBuffer);
+				return nullptr;
+			}
+
+			SDL_memcpy(mapped, in_data.data(), in_data.size());
+			SDL_UnmapGPUTransferBuffer(in_gpuDevice, transferBuffer);
+
+			SDL_GPUTextureTransferInfo source{};
+			source.transfer_buffer = transferBuffer;
+
+			SDL_GPUTextureRegion destination{};
+			destination.texture = in_texture;
+			destination.z = static_cast<Uint32>(in_offsetZ);
+			destination.w = static_cast<Uint32>(in_size.x);
+			destination.h = static_cast<Uint32>(in_size.y);
+			destination.d = static_cast<Uint32>(in_size.z);
+
+			SDL_UploadToGPUTexture(in_copyPass, &source, &destination, false);
+
+			return transferBuffer;
+		}
 
 		SDL_GPUShader* LoadShader(SDL_GPUDevice* in_gpuDevice, const char* in_path, SDL_GPUShaderStage in_shaderStage, Uint32 in_numUniformBuffers, Uint32 in_numStorageTextures, Uint32 in_numSamplers)
 		{
@@ -95,6 +164,11 @@ namespace solar
 		if (presentPipeline != nullptr)
 		{
 			SDL_ReleaseGPUGraphicsPipeline(gpuDevice, presentPipeline);
+		}
+
+		if (coarseTexture != nullptr)
+		{
+			SDL_ReleaseGPUTexture(gpuDevice, coarseTexture);
 		}
 
 		if (voxelTexture != nullptr)
@@ -214,7 +288,7 @@ namespace solar
 			"shaders/Fullscreen.frag.spv",
 			SDL_GPU_SHADERSTAGE_FRAGMENT,
 			4,
-			1,
+			2,
 			0
 		);
 
@@ -329,6 +403,7 @@ namespace solar
 		// deep as all of them together. Wasteful when their shapes disagree, and exactly what a real
 		// brick pool replaces later
 		IVec3 atlasSize = { 0, 0, 0 };
+		IVec3 coarseAtlasSize = { 0, 0, 0 };
 
 		// One palette serves the whole scene, so each model's indices are shifted clear of every
 		// other model's and the voxel data is remapped to match as it uploads
@@ -363,13 +438,23 @@ namespace solar
 			paletteBases[index] = paletteUsed;
 			paletteUsed += highestMaterial;
 
+			// Rounded up, so a model whose size is not a whole number of cells still gets a cell
+			// covering the remainder
+			const IVec3 coarseSize = (size + (coarseCell - 1)) / coarseCell;
+
 			loadedModels[index].atlasOffset = { 0, 0, atlasSize.z };
 			loadedModels[index].size = size;
 			loadedModels[index].voxelSize = model.voxelSize;
+			loadedModels[index].coarseOffset = { 0, 0, coarseAtlasSize.z };
+			loadedModels[index].coarseSize = coarseSize;
 
 			atlasSize.x = SDL_max(atlasSize.x, size.x);
 			atlasSize.y = SDL_max(atlasSize.y, size.y);
 			atlasSize.z += size.z;
+
+			coarseAtlasSize.x = SDL_max(coarseAtlasSize.x, coarseSize.x);
+			coarseAtlasSize.y = SDL_max(coarseAtlasSize.y, coarseSize.y);
+			coarseAtlasSize.z += coarseSize.z;
 		}
 
 		// Index 0 stays air, so only the rest are available to share out
@@ -391,19 +476,16 @@ namespace solar
 			voxelTexture = nullptr;
 		}
 
-		SDL_GPUTextureCreateInfo textureInfo{};
-		textureInfo.type = SDL_GPU_TEXTURETYPE_3D;
-		textureInfo.format = SDL_GPU_TEXTUREFORMAT_R8_UINT;
-		textureInfo.usage = SDL_GPU_TEXTUREUSAGE_GRAPHICS_STORAGE_READ;
-		textureInfo.width = static_cast<Uint32>(atlasSize.x);
-		textureInfo.height = static_cast<Uint32>(atlasSize.y);
-		// Depth shares a field with array layer count for 2D arrays
-		textureInfo.layer_count_or_depth = static_cast<Uint32>(atlasSize.z);
-		textureInfo.num_levels = 1;
+		if (coarseTexture != nullptr)
+		{
+			SDL_ReleaseGPUTexture(gpuDevice, coarseTexture);
+			coarseTexture = nullptr;
+		}
 
-		voxelTexture = SDL_CreateGPUTexture(gpuDevice, &textureInfo);
+		voxelTexture = CreateVoxelTexture(gpuDevice, atlasSize);
+		coarseTexture = CreateVoxelTexture(gpuDevice, coarseAtlasSize);
 
-		if (voxelTexture == nullptr)
+		if (voxelTexture == nullptr || coarseTexture == nullptr)
 		{
 			SOLAR_LOG_ERR(RENDER, "Failed to create voxel atlas: {}", SDL_GetError());
 			return Error::RENDERER_FAILURE;
@@ -420,6 +502,7 @@ namespace solar
 		voxelPalette = voxel::Palette{};
 
 		SDL_GPUTransferBuffer* transferBuffers[maxSceneModels]{};
+		SDL_GPUTransferBuffer* coarseBuffers[maxSceneModels]{};
 		SDL_GPUCopyPass* copyPass = SDL_BeginGPUCopyPass(commandBuffer);
 
 		Error result = Error::NONE;
@@ -428,6 +511,7 @@ namespace solar
 		{
 			const VoxelModel& model = in_models[index];
 			const voxel::VoxelGrid& grid = *model.grid;
+			const LoadedModel& loaded = loadedModels[index];
 			const int base = paletteBases[index];
 
 			for (size_t entry = 1; entry + base < voxel::paletteSize; ++entry)
@@ -435,63 +519,68 @@ namespace solar
 				voxelPalette.colours[entry + base] = model.palette->colours[entry];
 			}
 
-			SDL_GPUTransferBufferCreateInfo transferInfo{};
-			transferInfo.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
-			transferInfo.size = static_cast<Uint32>(grid.materials.size());
-
-			transferBuffers[index] = SDL_CreateGPUTransferBuffer(gpuDevice, &transferInfo);
-
-			if (transferBuffers[index] == nullptr)
-			{
-				SOLAR_LOG_ERR(RENDER, "Failed to create transfer buffer: {}", SDL_GetError());
-				result = Error::RENDERER_FAILURE;
-				break;
-			}
-
-			uint8_t* mapped = static_cast<uint8_t*>(
-				SDL_MapGPUTransferBuffer(gpuDevice, transferBuffers[index], false)
+			// Both built in one pass: the materials shifted clear of the other models, and a cell
+			// marked for every voxel that turns out to be solid. Air leaves each alone, so the
+			// vectors start as all air and only the solid voxels are written
+			std::vector<uint8_t> materials(grid.materials.size(), 0);
+			std::vector<uint8_t> coarse(
+				static_cast<size_t>(loaded.coarseSize.x) * loaded.coarseSize.y * loaded.coarseSize.z,
+				0
 			);
 
-			if (mapped == nullptr)
+			for (int z = 0; z < grid.size.z; ++z)
 			{
-				SOLAR_LOG_ERR(RENDER, "Failed to map transfer buffer: {}", SDL_GetError());
+				for (int y = 0; y < grid.size.y; ++y)
+				{
+					for (int x = 0; x < grid.size.x; ++x)
+					{
+						const size_t at = voxel::VoxelIndex(grid.size, x, y, z);
+						const uint8_t material = grid.materials[at];
+
+						if (material == 0)
+						{
+							continue;
+						}
+
+						materials[at] = static_cast<uint8_t>(material + base);
+
+						coarse[voxel::VoxelIndex(
+							loaded.coarseSize,
+							x / coarseCell,
+							y / coarseCell,
+							z / coarseCell
+						)] = 1;
+					}
+				}
+			}
+
+			transferBuffers[index] = UploadVoxels(
+				gpuDevice, copyPass, voxelTexture, materials, grid.size, loaded.atlasOffset.z
+			);
+
+			coarseBuffers[index] = UploadVoxels(
+				gpuDevice, copyPass, coarseTexture, coarse, loaded.coarseSize, loaded.coarseOffset.z
+			);
+
+			if (transferBuffers[index] == nullptr || coarseBuffers[index] == nullptr)
+			{
 				result = Error::RENDERER_FAILURE;
-				break;
 			}
-
-			for (size_t voxelIndex = 0; voxelIndex < grid.materials.size(); ++voxelIndex)
-			{
-				const uint8_t material = grid.materials[voxelIndex];
-
-				mapped[voxelIndex] = material == 0
-					? 0
-					: static_cast<uint8_t>(material + base);
-			}
-
-			SDL_UnmapGPUTransferBuffer(gpuDevice, transferBuffers[index]);
-
-			SDL_GPUTextureTransferInfo source{};
-			source.transfer_buffer = transferBuffers[index];
-
-			SDL_GPUTextureRegion destination{};
-			destination.texture = voxelTexture;
-			destination.z = static_cast<Uint32>(loadedModels[index].atlasOffset.z);
-			destination.w = static_cast<Uint32>(grid.size.x);
-			destination.h = static_cast<Uint32>(grid.size.y);
-			destination.d = static_cast<Uint32>(grid.size.z);
-
-			SDL_UploadToGPUTexture(copyPass, &source, &destination, false);
 		}
-
 		SDL_EndGPUCopyPass(copyPass);
 		SDL_SubmitGPUCommandBuffer(commandBuffer);
 
 		// Safe to release immediately: SDL keeps each alive until its copy completes
-		for (SDL_GPUTransferBuffer* transferBuffer : transferBuffers)
+		for (int index = 0; index < maxSceneModels; ++index)
 		{
-			if (transferBuffer != nullptr)
+			if (transferBuffers[index] != nullptr)
 			{
-				SDL_ReleaseGPUTransferBuffer(gpuDevice, transferBuffer);
+				SDL_ReleaseGPUTransferBuffer(gpuDevice, transferBuffers[index]);
+			}
+
+			if (coarseBuffers[index] != nullptr)
+			{
+				SDL_ReleaseGPUTransferBuffer(gpuDevice, coarseBuffers[index]);
 			}
 		}
 
@@ -505,8 +594,11 @@ namespace solar
 
 		SOLAR_LOG_INFO(
 			RENDER,
-			"Uploaded {} models into a {}x{}x{} atlas using {} palette entries",
-			in_count, atlasSize.x, atlasSize.y, atlasSize.z, paletteUsed
+			"Uploaded {} models into a {}x{}x{} atlas with a {}x{}x{} skip volume, {} palette entries",
+			in_count,
+			atlasSize.x, atlasSize.y, atlasSize.z,
+			coarseAtlasSize.x, coarseAtlasSize.y, coarseAtlasSize.z,
+			paletteUsed
 		);
 
 		return Error::NONE;
@@ -521,6 +613,7 @@ namespace solar
 
 			data.modelOffset[index] = Vec4(model.atlasOffset, model.voxelSize);
 			data.modelSize[index] = Vec4(model.size, 0.0f);
+			data.modelCoarse[index] = Vec4(model.coarseOffset, static_cast<float>(coarseCell));
 		}
 
 		const int count = SDL_min(in_instanceCount, maxSceneInstances);
@@ -693,7 +786,9 @@ namespace solar
 			SDL_PushGPUFragmentUniformData(commandBuffer, 3, &sceneData, sizeof(sceneData));
 
 			SDL_BindGPUGraphicsPipeline(scenePass, graphicsPipeline);
-			SDL_BindGPUFragmentStorageTextures(scenePass, 0, &voxelTexture, 1);
+			SDL_GPUTexture* const volumes[] = { voxelTexture, coarseTexture };
+
+			SDL_BindGPUFragmentStorageTextures(scenePass, 0, volumes, 2);
 			SDL_DrawGPUPrimitives(scenePass, 3, 1, 0, 0);
 
 			SDL_EndGPURenderPass(scenePass);

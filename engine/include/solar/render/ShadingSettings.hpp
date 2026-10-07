@@ -21,6 +21,12 @@ namespace solar
 		// blurred upscale; above it the facets are sub-pixel noise worth removing.
 		float normalFadeVoxels = 0.6f;
 
+		// The two per-pixel costs that can be removed without changing the geometry, so turning
+		// each off against the frame time is the only profiling available while SDL_GPU has no
+		// timestamp queries
+		bool shadows = true;
+		bool ambientOcclusion = true;
+
 		// Strength of the per-axis tint taken from the geometric normal, 0 to 1.
 		// Three distinct values for the three axis directions is the cue that reads
 		// as "voxels", and the smooth shading normal is what removes it.

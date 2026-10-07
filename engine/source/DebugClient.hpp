@@ -75,5 +75,7 @@ namespace solar
 
 		bool isLooking = false;
 		bool smoothNormalsKeyWasDown = false;
+		bool shadowsKeyWasDown = false;
+		bool occlusionKeyWasDown = false;
 	};
 }

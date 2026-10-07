@@ -15,7 +15,7 @@ namespace solar
 		Vec4 up = { 0.0f, 1.0f, 0.0f, 0.0f };
 		Vec4 forward = { 0.0f, 0.0f, -1.0f, 0.0f };
 		Vec4 shadingA = { 0.0f, 0.0f, 0.0f, 0.0f }; // normal radius, normal fade, axis tint, smooth normals on
-		Vec4 shadingB = { 0.0f, 0.0f, 0.0f, 0.0f }; // concavity guard, pixel angle, spare, spare
+		Vec4 shadingB = { 0.0f, 0.0f, 0.0f, 0.0f }; // concavity guard, pixel angle, shadows on, occlusion on
 	};
 
 	static_assert(sizeof(CameraData) == 96, "CameraData must match the shader cbuffer layout");
@@ -52,7 +52,12 @@ namespace solar
 			? 2.0f * scale / static_cast<float>(in_targetHeight)
 			: 0.0f;
 
-		data.shadingB = Vec4(in_shading.concavityGuard, pixelAngle, 0.0f, 0.0f);
+		data.shadingB = Vec4(
+			in_shading.concavityGuard,
+			pixelAngle,
+			in_shading.shadows ? 1.0f : 0.0f,
+			in_shading.ambientOcclusion ? 1.0f : 0.0f
+		);
 
 		return data;
 	}

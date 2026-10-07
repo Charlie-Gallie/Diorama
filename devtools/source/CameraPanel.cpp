@@ -124,6 +124,12 @@ namespace solar::devtools
 			ImGui::EndDisabled();
 
 			ImGui::DragFloat("Axis tint", &inout_shading.axisTint, 0.01f, 0.0f, 1.0f, "%.2f");
+
+			ImGui::Spacing();
+
+			// Switched off one at a time, with the performance panel open, to see what each costs
+			ImGui::Checkbox("Shadow rays  [2]", &inout_shading.shadows);
+			ImGui::Checkbox("Ambient occlusion  [3]", &inout_shading.ambientOcclusion);
 		}
 
 		// Colours are linear, so the swatches read darker than the light they describe. Editing

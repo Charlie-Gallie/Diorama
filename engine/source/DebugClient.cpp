@@ -112,6 +112,17 @@ namespace solar
 			return MakeOrbitCamera(in_target, in_yawDegrees, in_pitchDegrees, distance, in_fovYDegrees);
 		}
 
+		// Latched, so holding a key toggles once rather than once a frame
+		bool Pressed(input::Key in_key, bool& inout_wasDown)
+		{
+			const bool down = input::IsKeyDown(in_key);
+			const bool pressed = down && inout_wasDown == false;
+
+			inout_wasDown = down;
+
+			return pressed;
+		}
+
 		// Built on first use rather than at namespace scope, because the angles go through sin and
 		// cos so they cannot be a constant expression
 		const CameraPreset* CameraPresets()
@@ -247,16 +258,23 @@ namespace solar
 	}
 	void DebugClient::Update(Window& inout_window, Renderer& inout_renderer, float in_deltaTime)
 	{
-		// Latched so holding the key toggles once rather than every frame
-		const bool smoothNormalsKeyDown = input::IsKeyDown(input::Key::NUM_1);
-
-		if (smoothNormalsKeyDown && smoothNormalsKeyWasDown == false)
+		if (Pressed(input::Key::NUM_1, smoothNormalsKeyWasDown))
 		{
 			shading.smoothNormals = !shading.smoothNormals;
 			SOLAR_LOG_INFO(RENDER, "Smooth normals {}", shading.smoothNormals ? "on" : "off");
 		}
 
-		smoothNormalsKeyWasDown = smoothNormalsKeyDown;
+		if (Pressed(input::Key::NUM_2, shadowsKeyWasDown))
+		{
+			shading.shadows = !shading.shadows;
+			SOLAR_LOG_INFO(RENDER, "Shadow rays {}", shading.shadows ? "on" : "off");
+		}
+
+		if (Pressed(input::Key::NUM_3, occlusionKeyWasDown))
+		{
+			shading.ambientOcclusion = !shading.ambientOcclusion;
+			SOLAR_LOG_INFO(RENDER, "Ambient occlusion {}", shading.ambientOcclusion ? "on" : "off");
+		}
 
 		// Presets do not need latching because holding the key just keeps reapplying the same
 		// camera. The rest are panel only
