@@ -10,10 +10,10 @@ namespace solar
 	struct LightData
 	{
 		Vec4 keyDirection = { 0.0f, 1.0f, 0.0f, 0.0f }; // xyz unit direction towards the key, w intensity
-		Vec4 keyColour = { 1.0f, 1.0f, 1.0f, 0.0f }; // xyz linear colour
+		Vec4 keyColour = { 1.0f, 1.0f, 1.0f, 0.0f }; // xyz linear colour, w terminator wrap
 		Vec4 skyColour = { 0.0f, 0.0f, 0.0f, 0.0f }; // xyz linear colour, w intensity
 		Vec4 groundColour = { 0.0f, 0.0f, 0.0f, 0.0f }; // xyz linear colour, w intensity
-		Vec4 ambient = { 0.0f, 0.0f, 0.0f, 0.0f }; // x occlusion floor, yzw spare
+		Vec4 ambient = { 0.0f, 0.0f, 0.0f, 0.0f }; // x occlusion floor, y shadow range, z occlusion bounce, w shadow skip
 	};
 
 	static_assert(sizeof(LightData) == 80, "LightData must match the shader cbuffer layout");
@@ -34,10 +34,15 @@ namespace solar
 		// Unit length by construction, so normalising only cleans up the error left by sin and
 		// cos. Done here because the shader would otherwise pay for it once per pixel
 		data.keyDirection = Vec4(normalize(direction), in_lights.keyIntensity);
-		data.keyColour = Vec4(in_lights.keyColour, 0.0f);
+		data.keyColour = Vec4(in_lights.keyColour, in_lights.keyWrap);
 		data.skyColour = Vec4(in_lights.skyColour, in_lights.skyIntensity);
 		data.groundColour = Vec4(in_lights.groundColour, in_lights.groundIntensity);
-		data.ambient = Vec4(in_lights.occlusionFloor, 0.0f, 0.0f, 0.0f);
+		data.ambient = Vec4(
+			in_lights.occlusionFloor,
+			in_lights.shadowRange,
+			in_lights.occlusionBounce,
+			in_lights.shadowSkip
+		);
 
 		return data;
 	}

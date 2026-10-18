@@ -13,7 +13,10 @@ namespace solar
 		ImGuiLayer() = default;
 		~ImGuiLayer();
 
-		Error Initialize(
+		ImGuiLayer(const ImGuiLayer&) = delete;
+		ImGuiLayer& operator=(const ImGuiLayer&) = delete;
+
+		[[nodiscard]] Error Initialize(
 			SDL_GPUDevice* in_gpuDevice,
 			SDL_Window* in_sdlWindow,
 			SDL_GPUTextureFormat in_gpuTexFormat,
@@ -27,5 +30,10 @@ namespace solar
 	private:
 		ImGuiContext* context = nullptr;
 		SDL_Window* sdlWindow = nullptr;
+
+		// One flag per backend rather than one for the pair. Initialize can fail between the two,
+		// and shutting down a backend that never started is not something ImGui tolerates
+		bool isPlatformStarted = false;
+		bool isRendererStarted = false;
 	};
 }

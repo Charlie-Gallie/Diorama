@@ -6,6 +6,11 @@ namespace solar::input
 {
 	namespace
 	{
+		// Set once a frame by whatever draws the UI, and read by callers deciding whether an
+		// action should yield to it
+		bool uiCapturesKeyboard = false;
+		bool uiCapturesMouse = false;
+
 		SDL_Scancode ToScancode(Key in_key)
 		{
 			switch (in_key)
@@ -45,6 +50,22 @@ namespace solar::input
 
 			return 0;
 		}
+	}
+
+	void SetUiCapture(bool in_keyboard, bool in_mouse)
+	{
+		uiCapturesKeyboard = in_keyboard;
+		uiCapturesMouse = in_mouse;
+	}
+
+	bool IsUiCapturingKeyboard()
+	{
+		return uiCapturesKeyboard;
+	}
+
+	bool IsUiCapturingMouse()
+	{
+		return uiCapturesMouse;
 	}
 
 	bool IsKeyDown(Key in_key)

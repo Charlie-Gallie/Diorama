@@ -11,6 +11,7 @@
 
 #include <SDL3/SDL.h>
 
+#include <algorithm>
 #include <vector>
 
 namespace solar
@@ -22,6 +23,44 @@ namespace solar
 		// pixels and still fills the screen. Fair view size is guaranteed by the
 		// camera covering a fixed extent in world units, not by this being fixed.
 		constexpr int preferredInternalHeight = 720;
+
+		// Which whole-number upscale puts the internal height nearest the preferred one.
+		//
+		// Rounding the ratio instead - round(windowHeight / preferred) - is not the same thing and
+		// leans the wrong way, because windowHeight / scale falls off non-linearly. A 974 line
+		// window gives a ratio of 1.35, which rounds to 1 and renders all 974 lines natively, when
+		// 487 is nearer to 720 and costs a quarter of the pixels. So each candidate is measured by
+		// the height it actually produces
+		int PickInternalScale(int in_windowHeight)
+		{
+			int scale = 1;
+			int bestDistance = SDL_abs(in_windowHeight - preferredInternalHeight);
+
+			// The height falls monotonically as the scale rises, so its distance from the preferred
+			// height falls and then rises. The first candidate no better than the best so far is
+			// past the turn, and a tie keeps the lower scale and the sharper image
+			for (int candidate = 2; ; ++candidate)
+			{
+				const int height = in_windowHeight / candidate;
+
+				if (height < 1)
+				{
+					break;
+				}
+
+				const int distance = SDL_abs(height - preferredInternalHeight);
+
+				if (distance >= bestDistance)
+				{
+					break;
+				}
+
+				bestDistance = distance;
+				scale = candidate;
+			}
+
+			return scale;
+		}
 
 		// Float rather than UNORM so lighting is not clamped at 1.0. Without the headroom the
 		// three light terms have to sum under one, which forces a weak key and loses the warm
@@ -42,6 +81,49 @@ namespace solar
 #else
 		constexpr bool enableGpuDebug = true;
 #endif
+
+		// TODO: This will need to change/be ripped out
+		//
+		// The default should not be picked by this arbitrary order, and this isn't
+		// even the place setting the present mode, so the output is a preemptive
+		// claim which might not be true
+		SDL_GPUPresentMode PickPresentMode(SDL_GPUDevice* in_gpuDevice, SDL_Window* in_sdlWindow)
+		{
+			bool supportsVsync = SDL_WindowSupportsGPUPresentMode(in_gpuDevice, in_sdlWindow, SDL_GPU_PRESENTMODE_VSYNC);
+			bool supportsImmediate = SDL_WindowSupportsGPUPresentMode(in_gpuDevice, in_sdlWindow, SDL_GPU_PRESENTMODE_IMMEDIATE);
+			bool supportsMailbox = SDL_WindowSupportsGPUPresentMode(in_gpuDevice, in_sdlWindow, SDL_GPU_PRESENTMODE_MAILBOX);
+
+			SOLAR_LOG_INFO(
+				RENDER,
+				"Supported GPU Present Modes:"
+				"\n\t{}: {}"
+				"\n\t{}: {}"
+				"\n\t{}: {}",
+				"Mailbox", supportsMailbox,
+				"Immediate", supportsImmediate,
+				"VSync", supportsVsync
+			);
+
+			SDL_GPUPresentMode presentMode = SDL_GPU_PRESENTMODE_VSYNC;
+
+			if (supportsMailbox)
+			{
+				presentMode = SDL_GPU_PRESENTMODE_MAILBOX;
+				SOLAR_LOG_INFO(RENDER, "Using Mailbox");
+			}
+			else if (supportsImmediate)
+			{
+				presentMode = SDL_GPU_PRESENTMODE_IMMEDIATE;
+				SOLAR_LOG_INFO(RENDER, "Using Immediate (might get screen tearing)");
+			}
+			else
+			{
+				presentMode = SDL_GPU_PRESENTMODE_VSYNC;
+				SOLAR_LOG_INFO(RENDER, "Using Vsync");
+			}
+
+			return presentMode;
+		}
 
 		SDL_GPUTexture* CreateVoxelTexture(SDL_GPUDevice* in_gpuDevice, const IVec3& in_size)
 		{
@@ -243,7 +325,7 @@ namespace solar
 
 		isClaimed = true;
 
-		SDL_GPUPresentMode presentMode = PickPresentMode();
+		SDL_GPUPresentMode presentMode = PickPresentMode(gpuDevice, sdlWindow);
 
 		if (SDL_SetGPUSwapchainParameters(
 			gpuDevice,
@@ -603,8 +685,12 @@ namespace solar
 
 		return Error::NONE;
 	}
-	SceneData Renderer::MakeSceneData(const VoxelInstance* in_instances, int in_instanceCount) const
-	{
+
+	SceneData Renderer::MakeSceneData(
+		const VoxelInstance* in_instances,
+		int in_instanceCount,
+		const Vec3& in_cameraPosition
+	) const {
 		SceneData data;
 
 		for (int index = 0; index < loadedModelCount; ++index)
@@ -618,6 +704,23 @@ namespace solar
 
 		const int count = SDL_min(in_instanceCount, maxSceneInstances);
 
+		// Each instance reduced to what the shader needs, plus how near it is to the camera
+		struct Ordered
+		{
+			Vec3 position = { 0.0f, 0.0f, 0.0f };
+			Vec3 sphereCentre = { 0.0f, 0.0f, 0.0f };
+			float sphereRadius = 0.0f;
+			float yaw = 0.0f;
+			float scale = 1.0f;
+			int model = 0;
+
+			// To the nearest point on the sphere, so a large instance whose centre is far away
+			// still sorts by the part of it the camera can actually reach first
+			float distance = 0.0f;
+		};
+
+		Ordered ordered[maxSceneInstances];
+
 		for (int index = 0; index < count; ++index)
 		{
 			const VoxelInstance& instance = in_instances[index];
@@ -626,17 +729,52 @@ namespace solar
 			// reading past the end of the array in the shader
 			const int model = glm::clamp(instance.model, 0, SDL_max(loadedModelCount - 1, 0));
 
-			data.instanceTransform[index] = Vec4(instance.position, static_cast<float>(model));
+			// Floored rather than trusted, since a zero would collapse the model to nothing and
+			// then be divided by. The sphere has to agree with it, so it is taken once
+			const float scale = glm::max(instance.scale, 0.0001f);
+
+			// The box is centred on x and z and rises from the base, so its middle sits directly
+			// above the position - and a yaw turns that point onto itself, so the centre needs no
+			// rotation. Nor does the radius, which is half the box diagonal either way
+			const Vec3 extent = Vec3(loadedModels[model].size) * (loadedModels[model].voxelSize * scale);
+
+			Ordered& entry = ordered[index];
+
+			entry.position = instance.position;
+			entry.sphereCentre = instance.position + Vec3(0.0f, extent.y * 0.5f, 0.0f);
+			entry.sphereRadius = 0.5f * glm::length(extent);
+			entry.yaw = instance.yaw;
+			entry.scale = scale;
+			entry.model = model;
+			entry.distance = glm::length(entry.sphereCentre - in_cameraPosition) - entry.sphereRadius;
+		}
+
+		// Nearest first, so a camera ray finds its closest hit early and every instance behind it
+		// is then turned away by comparison instead of being traversed. The sphere test cannot do
+		// that on its own, because until something has been hit there is no distance to beat.
+		// Shadow rays travel a different way and gain nothing from this order, but lose nothing
+		// to it either
+		std::sort(ordered, ordered + count, [](const Ordered& in_a, const Ordered& in_b)
+		{
+			return in_a.distance < in_b.distance;
+		});
+
+		for (int index = 0; index < count; ++index)
+		{
+			const Ordered& entry = ordered[index];
+
+			data.instanceTransform[index] = Vec4(entry.position, static_cast<float>(entry.model));
 
 			// Taken once here rather than per pixel, which is the only reason the yaw is not
-			// simply handed over as an angle. The scale is floored rather than trusted, since a
-			// zero would collapse the model to nothing and then divide by it
+			// simply handed over as an angle
 			data.instanceRotation[index] = Vec4(
-				glm::sin(instance.yaw),
-				glm::cos(instance.yaw),
-				glm::max(instance.scale, 0.0001f),
+				glm::sin(entry.yaw),
+				glm::cos(entry.yaw),
+				entry.scale,
 				0.0f
 			);
+
+			data.instanceSphere[index] = Vec4(entry.sphereCentre, entry.sphereRadius);
 		}
 
 		data.counts.x = static_cast<float>(count);
@@ -730,15 +868,17 @@ namespace solar
 			return;
 		}
 
-		const int scale = SDL_max(1, static_cast<int>(SDL_roundf(
-			static_cast<float>(swapchainHeight) / preferredInternalHeight)));
+		const int scale = PickInternalScale(static_cast<int>(swapchainHeight));
 
 		const int targetHeight = SDL_max(1, static_cast<int>(swapchainHeight) / scale);
 		const int targetWidth = SDL_max(1, static_cast<int>(swapchainWidth) / scale);
 
 		if (EnsureSceneTexture(targetWidth, targetHeight) == false)
 		{
-			SDL_CancelGPUCommandBuffer(commandBuffer);
+			// Submitted rather than cancelled: SDL makes it an error to cancel a command buffer
+			// that has acquired a swapchain texture, so the only way out from here is to send an
+			// empty frame
+			SDL_SubmitGPUCommandBuffer(commandBuffer);
 			return;
 		}
 
@@ -761,11 +901,12 @@ namespace solar
 		{
 			SDL_GPUColorTargetInfo target{};
 			target.texture = sceneTexture;
-			// Linear, like everything else written into this target. The scene shader covers every
-			// pixel so the clear is never actually seen, but it stops being a lie the first time
-			// something does not
-			target.clear_color = { 0.012f, 0.012f, 0.02f, 1.0f };
-			target.load_op = SDL_GPU_LOADOP_CLEAR;
+
+			// The scene shader is a fullscreen triangle that returns a colour on every path, so
+			// every texel is written and there is nothing here worth clearing or preserving.
+			// If a pass is ever added that does not cover the target, this goes back to a clear -
+			// the symptom would be the previous frame showing through rather than a known colour
+			target.load_op = SDL_GPU_LOADOP_DONT_CARE;
 			target.store_op = SDL_GPU_STOREOP_STORE;
 
 			SDL_GPURenderPass* scenePass = SDL_BeginGPURenderPass(commandBuffer, &target, 1, nullptr);
@@ -777,7 +918,7 @@ namespace solar
 			const CameraData cameraData = MakeCameraData(in_camera, sceneAspect, sceneHeight, shading);
 
 			const EnvironmentData environmentData = MakeEnvironmentData(lights, atmosphere);
-			const SceneData sceneData = MakeSceneData(in_instances, in_instanceCount);
+			const SceneData sceneData = MakeSceneData(in_instances, in_instanceCount, in_camera.position);
 
 			SDL_PushGPUFragmentUniformData(commandBuffer, 0, &cameraData, sizeof(cameraData));
 			SDL_PushGPUFragmentUniformData(commandBuffer, 1, voxelPalette.colours.data(),
@@ -808,9 +949,12 @@ namespace solar
 			const int scaledWidth = sceneWidth * scale;
 			const int scaledHeight = sceneHeight * scale;
 
+			// Floored to whole pixels. A viewport starting on a half pixel offsets the whole
+			// nearest-neighbour fetch by half a texel, which makes some upscaled voxel blocks a
+			// pixel wider than their neighbours - the exact artefact the integer scale avoids
 			SDL_GPUViewport viewport{};
-			viewport.x = (static_cast<float>(swapchainWidth) - scaledWidth) * 0.5f;
-			viewport.y = (static_cast<float>(swapchainHeight) - scaledHeight) * 0.5f;
+			viewport.x = static_cast<float>((static_cast<int>(swapchainWidth) - scaledWidth) / 2);
+			viewport.y = static_cast<float>((static_cast<int>(swapchainHeight) - scaledHeight) / 2);
 			viewport.w = static_cast<float>(scaledWidth);
 			viewport.h = static_cast<float>(scaledHeight);
 			viewport.min_depth = 0.0f;
@@ -850,48 +994,5 @@ namespace solar
 		}
 
 		SDL_SubmitGPUCommandBuffer(commandBuffer);
-	}
-
-	// TODO: This will need to change/be ripped out
-	// 
-	// The default should not be picked by this arbitrary order, and this isn't
-	// even the place setting the present mode, so the output is a preemptive
-	// claim which might not be true
-	SDL_GPUPresentMode Renderer::PickPresentMode()
-	{
-		bool supportsVsync = SDL_WindowSupportsGPUPresentMode(gpuDevice, sdlWindow, SDL_GPU_PRESENTMODE_VSYNC);
-		bool supportsImmediate = SDL_WindowSupportsGPUPresentMode(gpuDevice, sdlWindow, SDL_GPU_PRESENTMODE_IMMEDIATE);
-		bool supportsMailbox = SDL_WindowSupportsGPUPresentMode(gpuDevice, sdlWindow, SDL_GPU_PRESENTMODE_MAILBOX);
-
-		SOLAR_LOG_INFO(
-			RENDER,
-			"Supported GPU Present Modes:"
-			"\n\t{}: {}"
-			"\n\t{}: {}"
-			"\n\t{}: {}",
-			"Mailbox", supportsMailbox,
-			"Immediate", supportsImmediate,
-			"VSync", supportsVsync
-		);
-
-		SDL_GPUPresentMode presentMode = SDL_GPU_PRESENTMODE_VSYNC;
-
-		if (supportsMailbox)
-		{
-			presentMode = SDL_GPU_PRESENTMODE_MAILBOX;
-			SOLAR_LOG_INFO(RENDER, "Using Mailbox");
-		}
-		else if (supportsImmediate)
-		{
-			presentMode = SDL_GPU_PRESENTMODE_IMMEDIATE;
-			SOLAR_LOG_INFO(RENDER, "Using Immediate (might get screen tearing)");
-		}
-		else
-		{
-			presentMode = SDL_GPU_PRESENTMODE_VSYNC;
-			SOLAR_LOG_INFO(RENDER, "Using Vsync");
-		}
-
-		return presentMode;
 	}
 }

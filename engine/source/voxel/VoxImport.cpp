@@ -147,15 +147,28 @@ namespace solar::voxel
 			return Error::INVALID_DATA;
 		}
 
+		// MAIN carries everything as children and nothing as content, but the field is honoured
+		// rather than assumed, so the loop below starts on a real chunk header either way
+		if (reader.Skip(main.contentSize) == false)
+		{
+			SOLAR_LOG_ERR(CORE, "MAIN chunk claims more content than the file holds");
+			return Error::INVALID_DATA;
+		}
+
 		IVec3 size = { 0, 0, 0 };
 		bool haveSize = false;
 		bool haveVoxels = false;
+		bool havePalette = false;
 
 		SetDefaultPalette(out_palette);
 
-		// Every chunk shares a header, so anything unrecognised can be skipped
-		// wholesale. MagicaVoxel adds chunks over time and none of the newer ones
-		// matter here.
+		// Every chunk shares a header and declares the size of its own content, so each one is
+		// read through a reader limited to exactly that and the cursor then lands where the next
+		// header must start. Anything unrecognised is therefore skipped for free, and a chunk
+		// that turns out to be longer than expected cannot desync the ones after it - which it
+		// could when each branch read only what it wanted and left the rest in place.
+		// Children are walked as though they were top level, which is all that is needed to find
+		// a model inside MAIN
 		while (reader.Remaining() >= 12)
 		{
 			ChunkHeader chunk;
@@ -165,11 +178,29 @@ namespace solar::voxel
 				break;
 			}
 
-			if (IsChunk(chunk, "SIZE"))
+			const uint8_t* content = reader.Take(chunk.contentSize);
+
+			if (content == nullptr)
 			{
-				if (reader.ReadI32(size.x) == false
-					|| reader.ReadI32(size.y) == false
-					|| reader.ReadI32(size.z) == false)
+				// The id is not printed because it is four raw bytes rather than a string, and a
+				// malformed file is exactly where it would not be null terminated
+				SOLAR_LOG_ERR(
+					CORE,
+					"A .vox chunk claims {} bytes of content but the file is shorter",
+					chunk.contentSize
+				);
+				return Error::INVALID_DATA;
+			}
+
+			ByteReader body(content, chunk.contentSize);
+
+			// Only the first model in the file is read, so a later SIZE or XYZI is left alone
+			// rather than quietly replacing what has already been built
+			if (IsChunk(chunk, "SIZE") && haveSize == false)
+			{
+				if (body.ReadI32(size.x) == false
+					|| body.ReadI32(size.y) == false
+					|| body.ReadI32(size.z) == false)
 				{
 					SOLAR_LOG_ERR(CORE, "Truncated SIZE chunk");
 					return Error::INVALID_DATA;
@@ -183,7 +214,7 @@ namespace solar::voxel
 
 				haveSize = true;
 			}
-			else if (IsChunk(chunk, "XYZI"))
+			else if (IsChunk(chunk, "XYZI") && haveVoxels == false)
 			{
 				if (haveSize == false)
 				{
@@ -193,13 +224,13 @@ namespace solar::voxel
 
 				uint32_t voxelCount = 0;
 
-				if (reader.ReadU32(voxelCount) == false)
+				if (body.ReadU32(voxelCount) == false)
 				{
 					SOLAR_LOG_ERR(CORE, "Truncated XYZI chunk");
 					return Error::INVALID_DATA;
 				}
 
-				const uint8_t* records = reader.Take(static_cast<size_t>(voxelCount) * 4);
+				const uint8_t* records = body.Take(static_cast<size_t>(voxelCount) * 4);
 
 				if (records == nullptr)
 				{
@@ -237,9 +268,9 @@ namespace solar::voxel
 
 				haveVoxels = true;
 			}
-			else if (IsChunk(chunk, "RGBA"))
+			else if (IsChunk(chunk, "RGBA") && havePalette == false)
 			{
-				const uint8_t* colours = reader.Take(paletteSize * 4);
+				const uint8_t* colours = body.Take(paletteSize * 4);
 
 				if (colours == nullptr)
 				{
@@ -260,10 +291,8 @@ namespace solar::voxel
 						colour[3] / 255.0f
 					);
 				}
-			}
-			else if (reader.Skip(chunk.contentSize) == false)
-			{
-				break;
+
+				havePalette = true;
 			}
 		}
 

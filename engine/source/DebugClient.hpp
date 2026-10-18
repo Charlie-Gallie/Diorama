@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 
 #include "solar/core/DebugUiHook.hpp"
 #include "solar/core/Error.hpp"
@@ -48,9 +48,9 @@ namespace solar
 		AtmosphereSettings atmosphere;
 		DebugUiContext debugUi;
 
-		// A patch of mock terrain, then whichever test model the panel has selected, a figure for
-		// human scale and two Menger sponges of a known size to shade against
-		VoxelInstance instances[5];
+		// A field of ground tiles with the detailed patch in the middle, then whichever test model
+		// the panel has selected, a figure for human scale and two Menger sponges to shade against
+		VoxelInstance instances[maxSceneInstances];
 		int instanceCount = 0;
 
 		// Every file the current scene was built from, so saving one in MagicaVoxel reloads it

@@ -17,10 +17,10 @@ cbuffer PaletteData : register(b1, space3)
 cbuffer EnvironmentData : register(b2, space3)
 {
 	float4 keyDirection; // xyz unit direction towards the key, w intensity
-	float4 keyColour; // xyz linear colour
+	float4 keyColour; // xyz linear colour, w terminator wrap
 	float4 skyColour; // xyz linear colour, w intensity
 	float4 groundColour; // xyz linear colour, w intensity
-	float4 ambientSettings; // x occlusion floor
+	float4 ambientSettings; // x occlusion floor, y shadow range, z occlusion bounce, w shadow skip
 
 	float4 skyHorizon; // xyz linear colour, w fog density
 	float4 skyZenith; // xyz linear colour, w ground tile size in metres
@@ -34,8 +34,11 @@ cbuffer SceneData : register(b3, space3)
 	float4 modelOffset[8]; // xyz atlas offset in voxels, w voxel size in metres
 	float4 modelSize[8]; // xyz size in voxels
 	float4 modelCoarse[8]; // xyz coarse atlas offset in cells, w voxels per cell
-	float4 instanceTransform[16]; // xyz position in metres, w model index
-	float4 instanceRotation[16]; // x sine of yaw, y cosine of yaw, z scale
+	// These bounds must match maxSceneInstances in VoxelModel.hpp. Nothing checks it for you -
+	// the C++ static_assert only proves the struct is self consistent
+	float4 instanceTransform[32]; // xyz position in metres, w model index
+	float4 instanceRotation[32]; // x sine of yaw, y cosine of yaw, z scale
+	float4 instanceSphere[32]; // xyz centre in metres, w radius
 };
 
 
@@ -61,7 +64,10 @@ struct BoxHit
 	bool hit;
 	float tEnter;
 	float tExit;
-	float3 entryNormal;
+
+	// Where each axis' near plane was crossed. Kept rather than turned into a normal here,
+	// because most boxes are rejected straight after this and would never use it
+	float3 nearPlanes;
 };
 
 BoxHit IntersectBox(float3 in_origin, float3 in_direction, float3 in_boxMin, float3 in_boxMax)
@@ -80,13 +86,17 @@ BoxHit IntersectBox(float3 in_origin, float3 in_direction, float3 in_boxMin, flo
 	result.tEnter = max(max(tNear.x, tNear.y), tNear.z);
 	result.tExit = min(min(tFar.x, tFar.y), tFar.z);
 	result.hit = result.tExit >= result.tEnter && result.tExit >= 0.0f;
-
-	// The axis whose near plane produced tEnter is the face entered through,
-	// which is the normal for a voxel that is solid before any step is taken
-	const float3 entryAxis = step(result.tEnter.xxx, tNear);
-	result.entryNormal = -sign(in_direction) * entryAxis;
+	result.nearPlanes = tNear;
 
 	return result;
+}
+
+// The axis whose near plane produced tEnter is the face the ray entered through, which is the
+// normal for a voxel that is already solid before the walk takes a step. Worked out only once a
+// box has survived every rejection, rather than for every box that is tested
+float3 BoxEntryNormal(BoxHit in_box, float3 in_direction)
+{
+	return -sign(in_direction) * step(in_box.tEnter.xxx, in_box.nearPlanes);
 }
 
 // Every model lives in one 3D texture at its own offset, so a lookup is a local voxel plus that
@@ -276,7 +286,16 @@ static const float aoRadius = 12.0f; // voxels
 static const int aoDirections = 5;
 static const int aoSamples = 4;
 
-float VoxelAmbientOcclusion(Model in_model, float3 in_hitPoint, float3 in_normal)
+// How much of the hemisphere a point can see, and the colour of whatever is blocking the rest.
+// Light arriving in a crevice got there by bouncing off its walls, so it carries their colour -
+// one bounce of it, gathered for free from samples that were being taken anyway
+struct Occlusion
+{
+	float visibility;
+	float3 occluderColour;
+};
+
+Occlusion VoxelAmbientOcclusion(Model in_model, float3 in_hitPoint, float3 in_normal)
 {
 	// Directions within a hemisphere - one straight out, four tilted
 	// Enough for a soft result without the variance that would need dithering.
@@ -295,6 +314,9 @@ float VoxelAmbientOcclusion(Model in_model, float3 in_hitPoint, float3 in_normal
 
 	float occlusion = 0.0f;
 
+	float3 blocked = float3(0.0f, 0.0f, 0.0f);
+	float blockedWeight = 0.0f;
+
 	for (int d = 0; d < aoDirections; ++d)
 	{
 		for (int s = 0; s < aoSamples; ++s)
@@ -303,17 +325,32 @@ float VoxelAmbientOcclusion(Model in_model, float3 in_hitPoint, float3 in_normal
 			const float distance = aoRadius * pow((s + 1.0f) / aoSamples, 2.0f);
 			const int3 sampleVoxel = (int3)floor(in_hitPoint + in_normal * 0.5f + directions[d] * distance);
 
-			if (SampleVoxel(in_model, sampleVoxel) != 0)
+			const uint material = SampleVoxel(in_model, sampleVoxel);
+
+			if (material != 0)
 			{
-				// Nearer occluders darken more
-				occlusion += 1.0f - distance / aoRadius;
+				// Nearer occluders darken more, and colour more, which is the same weight
+				const float weight = 1.0f - distance / aoRadius;
+
+				occlusion += weight;
+
+				blocked += paletteColours[material].rgb * weight;
+				blockedWeight += weight;
 			}
 		}
 	}
 
 	const float maximum = aoDirections * aoSamples * 0.5f;
 
-	return saturate(1.0f - occlusion / maximum);
+	Occlusion result;
+	result.visibility = saturate(1.0f - occlusion / maximum);
+
+	// White where nothing was in the way, so an unoccluded point is left exactly as it was
+	result.occluderColour = blockedWeight > 0.0f
+		? blocked / blockedWeight
+		: float3(1.0f, 1.0f, 1.0f);
+
+	return result;
 }
 
 struct TraceResult
@@ -336,7 +373,10 @@ struct Walk
 	float3 normal;
 };
 
-Walk BeginWalk(float3 in_origin, float3 in_direction, float in_tStart, float3 in_entryNormal)
+// in_tDelta is how far along the ray one whole cell is, per axis. It belongs to the ray rather
+// than to the cell a walk starts in, so the caller works it out once and hands it over - the fine
+// walk is restarted in every occupied cell and used to redo those three divides each time
+Walk BeginWalk(float3 in_origin, float3 in_direction, float3 in_tDelta, float in_tStart, float3 in_entryNormal)
 {
 	// Nudged off the boundary so floor cannot land on the neighbouring cell
 	const float start = in_tStart + 0.0001f;
@@ -345,7 +385,7 @@ Walk BeginWalk(float3 in_origin, float3 in_direction, float in_tStart, float3 in
 	Walk walk;
 	walk.cell = (int3)floor(entry);
 	walk.step = (int3)sign(in_direction);
-	walk.tDelta = 1.0f / abs(in_direction);
+	walk.tDelta = in_tDelta;
 	walk.t = in_tStart;
 	walk.normal = in_entryNormal;
 
@@ -407,10 +447,17 @@ TraceResult TraceGrid(Model in_model, float3 in_origin, float3 in_direction, flo
 	result.t = in_tStart;
 	result.voxel = int3(0, 0, 0);
 
-	const float3 coarseOrigin = in_origin / in_model.coarseCell;
-	const float3 coarseDirection = in_direction / in_model.coarseCell;
+	// One reciprocal rather than six divides, and the coarse grid is just the fine one scaled, so
+	// its step length per axis is the fine one multiplied by the cell size
+	const float inverseCell = 1.0f / in_model.coarseCell;
 
-	Walk coarse = BeginWalk(coarseOrigin, coarseDirection, in_tStart, in_entryNormal);
+	const float3 coarseOrigin = in_origin * inverseCell;
+	const float3 coarseDirection = in_direction * inverseCell;
+
+	const float3 fineDelta = 1.0f / abs(in_direction);
+	const float3 coarseDelta = fineDelta * in_model.coarseCell;
+
+	Walk coarse = BeginWalk(coarseOrigin, coarseDirection, coarseDelta, in_tStart, in_entryNormal);
 
 	for (int cellStep = 0; cellStep < maxCoarseSteps; ++cellStep)
 	{
@@ -425,7 +472,7 @@ TraceResult TraceGrid(Model in_model, float3 in_origin, float3 in_direction, flo
 		{
 			const float fineEnd = min(cellExit, in_tEnd);
 
-			Walk fine = BeginWalk(in_origin, in_direction, max(coarse.t, in_tStart), coarse.normal);
+			Walk fine = BeginWalk(in_origin, in_direction, fineDelta, max(coarse.t, in_tStart), coarse.normal);
 
 			for (int voxelStep = 0; voxelStep < maxFineSteps; ++voxelStep)
 			{
@@ -467,9 +514,43 @@ struct SceneHit
 	int instance;
 };
 
+// A sphere around an instance's box, used to turn a ray away before it pays for the rotation
+// into local space and the three divides inside IntersectBox. The sphere encloses the box, so a
+// miss here is a guaranteed miss there and nothing real is ever culled.
+//
+// in_direction must be unit length, which both callers satisfy - the camera ray is normalised
+// and the key direction is normalised on the CPU
+bool MissesInstanceSphere(int in_index, float3 in_origin, float3 in_direction, float in_bestT)
+{
+	const float3 toCentre = instanceSphere[in_index].xyz - in_origin;
+	const float radius = instanceSphere[in_index].w;
+
+	const float along = dot(toCentre, in_direction);
+
+	// The ray cannot meet anything inside this sphere before it reaches along - radius, so if
+	// that is already past the nearest hit found so far there is nothing here worth looking at.
+	// This is what the nearest-first instance order exists to feed: once the closest instance has
+	// been hit, everything behind it leaves by this line
+	if (along - radius > in_bestT)
+	{
+		return true;
+	}
+
+	// Where the ray comes nearest the centre, clamped to zero so a sphere behind the origin is
+	// measured from the origin rather than from a point behind it
+	const float3 nearest = toCentre - in_direction * max(along, 0.0f);
+
+	return dot(nearest, nearest) > radius * radius;
+}
+
 // Rotation and translation leave t alone, and so does the uniform scale into voxels, so a
 // distance found inside one instance is directly comparable with every other
-SceneHit TraceScene(float3 in_origin, float3 in_direction, float in_maxDistance)
+//
+// in_anyHit stops at the first instance that blocks the ray rather than going on to find the
+// nearest one. A shadow ray only asks whether anything is in the way, so there is nothing to
+// gain from testing the instances behind an occluder it has already found. Only .hit is
+// meaningful in that mode - .t is wherever the search happened to stop
+SceneHit TraceScene(float3 in_origin, float3 in_direction, float in_maxDistance, bool in_anyHit)
 {
 	SceneHit result;
 	result.hit = false;
@@ -484,6 +565,13 @@ SceneHit TraceScene(float3 in_origin, float3 in_direction, float in_maxDistance)
 
 	for (int i = 0; i < instanceCount; ++i)
 	{
+		// Before anything else, because it needs no instance data beyond its own row and most
+		// instances are nowhere near any given ray
+		if (MissesInstanceSphere(i, in_origin, in_direction, result.t))
+		{
+			continue;
+		}
+
 		const Instance instance = GetInstance(i);
 		const Model model = GetModel(instance.model);
 
@@ -516,7 +604,7 @@ SceneHit TraceScene(float3 in_origin, float3 in_direction, float in_maxDistance)
 			gridDirection,
 			max(box.tEnter, 0.0f),
 			min(box.tExit, result.t),
-			box.entryNormal
+			BoxEntryNormal(box, localDirection)
 		);
 
 		if (hit.material != 0 && hit.t < result.t)
@@ -528,6 +616,13 @@ SceneHit TraceScene(float3 in_origin, float3 in_direction, float in_maxDistance)
 			result.gridNormal = hit.normal;
 			result.model = instance.model;
 			result.instance = i;
+
+			// Folded away at compile time, because HLSL inlines and both call sites pass a
+			// literal - so the camera ray keeps the full loop and the shadow ray keeps none of it
+			if (in_anyHit)
+			{
+				return result;
+			}
 		}
 	}
 
@@ -538,11 +633,28 @@ SceneHit TraceScene(float3 in_origin, float3 in_direction, float in_maxDistance)
 // in metres rather than in voxels, because the instances a shadow ray crosses may each be a
 // different density
 static const float shadowBias = 0.002f;
-static const float shadowRange = 120.0f;
+
+// How far a camera ray looks. It used to borrow the shadow range, which is now a panel setting -
+// and at 120 m the near orthographic preset, sitting about 86 m back, had only a few metres of
+// margin before the far side of the scene silently vanished. Generous costs almost nothing here,
+// because an instance beyond the view is turned away by its sphere and empty space is never walked
+static const float viewRange = 1000.0f;
 
 bool IsInShadow(float3 in_worldPoint, float3 in_worldNormal)
 {
-	return TraceScene(in_worldPoint + in_worldNormal * shadowBias, keyDirection.xyz, shadowRange).hit;
+	// Started a little way along the ray rather than at the surface, so anything smaller than
+	// the skip cannot shadow itself. One ray is a yes or a no, so a feature whose shadow is
+	// narrower than a pixel does not shade that pixel a little - it removes the key from it
+	// outright. Skipping past keeps the shadows worth having and drops the ones that only
+	// stipple the ground
+	const float skip = ambientSettings.w;
+
+	const float3 start = in_worldPoint + in_worldNormal * shadowBias + keyDirection.xyz * skip;
+
+	// Range comes from the panel rather than a constant here, because trading shadow distance
+	// against frame time is a judgement made by eye. The skip comes out of it so the reach is
+	// measured from the surface either way
+	return TraceScene(start, keyDirection.xyz, max(ambientSettings.y - skip, 0.0f), true).hit;
 }
 
 // Biased towards the horizon, where nearly all of a visible sky gradient sits
@@ -613,16 +725,26 @@ float3 ShadeVoxel(SceneHit in_hit, float3 in_worldPoint)
 	const float3 geometricNormal = LocalToWorld(instance, in_hit.gridNormal);
 	const float3 shadingNormal = LocalToWorld(instance, gridShadingNormal);
 
-	float diffuse = saturate(dot(shadingNormal, keyDirection.xyz));
+	// Wrapped rather than plain Lambert. A one voxel step turns the shading normal a long way
+	// over a voxel and a half, and dot alone falls off a cliff there - which is what makes small
+	// height changes in grass read as cuts. Standing in for light that scattered rather than
+	// arriving straight, which is most of why real foliage has no hard terminator
+	const float wrap = keyColour.w;
+	float diffuse = saturate((dot(shadingNormal, keyDirection.xyz) + wrap) / (1.0f + wrap));
 
 	if (diffuse > 0.0f && shadingB.z > 0.5f && IsInShadow(in_worldPoint, geometricNormal))
 	{
 		diffuse = 0.0f;
 	}
 
-	const float occlusion = shadingB.w > 0.5f
-		? VoxelAmbientOcclusion(model, in_hit.gridPoint, in_hit.gridNormal)
-		: 1.0f;
+	Occlusion occlusion;
+	occlusion.visibility = 1.0f;
+	occlusion.occluderColour = float3(1.0f, 1.0f, 1.0f);
+
+	if (shadingB.w > 0.5f)
+	{
+		occlusion = VoxelAmbientOcclusion(model, in_hit.gridPoint, in_hit.gridNormal);
+	}
 
 	// Sky light arrives from above and ground bounce from below, so the two are the ends of a
 	// hemisphere and the normal picks a point along it. This is what stops everything the key
@@ -632,9 +754,23 @@ float3 ShadeVoxel(SceneHit in_hit, float3 in_worldPoint)
 	const float3 sky = skyColour.rgb * skyColour.w;
 	const float3 ground = groundColour.rgb * groundColour.w;
 
+	// What an occluded point still receives, per channel. Light in a crevice got there by
+	// bouncing off the walls, so it is the occluder's own colour that arrives - a hollow in
+	// grass fills with green light rather than fading towards black.
+	//
+	// The albedo is scaled because one bounce undercounts what really happens in a crevice, and
+	// the floor is a minimum rather than the value itself, so a dark occluder can only ever
+	// leave it where it already was. At a bounce of zero this collapses to the flat floor it
+	// used to be, which is the A/B
+	const float3 occludedReach = max(
+		occlusion.occluderColour * ambientSettings.z,
+		ambientSettings.x.xxx
+	);
+
 	// Occlusion is how much of the hemisphere a point can see, so it belongs on these two and
 	// not on the key, which already has a real shadow ray of its own
-	const float3 ambient = lerp(ground, sky, upness) * lerp(ambientSettings.x, 1.0f, occlusion);
+	const float3 ambient = lerp(ground, sky, upness)
+		* lerp(occludedReach, float3(1.0f, 1.0f, 1.0f), occlusion.visibility);
 
 	const float3 key = keyColour.rgb * keyDirection.w * diffuse;
 
@@ -668,7 +804,7 @@ float4 main(PSInput in_input) : SV_Target
 
 	// Passing the ground distance in as the limit lets an instance hidden behind the ground be
 	// rejected by the box test rather than traversed and then thrown away
-	const SceneHit hit = TraceScene(origin, direction, groundDistance > 0.0f ? groundDistance : shadowRange);
+	const SceneHit hit = TraceScene(origin, direction, groundDistance > 0.0f ? groundDistance : viewRange, false);
 
 	if (hit.hit)
 	{

@@ -34,22 +34,29 @@ namespace filesystem {
 		Buffer(const Buffer&) = delete;
 		Buffer& operator=(const Buffer&) = delete;
 
+		// The source is emptied field by field rather than through FreeBuffer, because that
+		// frees - and what it would free is the allocation this object has just taken over
 		Buffer(Buffer&& in_other) noexcept
 		{
 			data = in_other.data;
 			bytes = in_other.bytes;
 
-			FreeBuffer(in_other);
+			in_other.data = nullptr;
+			in_other.bytes = 0;
 		}
 
 		Buffer& operator=(Buffer&& in_other) noexcept
 		{
 			if (this != &in_other)
 			{
+				// Whatever this already held has to go before it is overwritten
+				FreeBuffer(*this);
+
 				data = in_other.data;
 				bytes = in_other.bytes;
 
-				FreeBuffer(in_other);
+				in_other.data = nullptr;
+				in_other.bytes = 0;
 			}
 
 			return *this;

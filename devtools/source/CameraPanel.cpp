@@ -19,7 +19,7 @@ namespace solar::devtools
 		constexpr float buttonWidth = 150.0f;
 
 		// Reported alongside whatever is loaded, so a density can be judged before switching to it
-		constexpr int reportedDensities[] = { 50, 40, 30, 20, 10 };
+		constexpr int reportedDensities[] = { 40, 30, 20, 10 };
 
 		void DrawPresets(DebugUiContext& inout_context, Camera& inout_camera)
 		{
@@ -155,6 +155,10 @@ namespace solar::devtools
 			ImGui::ColorEdit3("Key colour", &inout_lights.keyColour.x, ImGuiColorEditFlags_Float);
 			ImGui::DragFloat("Key intensity", &inout_lights.keyIntensity, 0.01f, 0.0f, 8.0f, "%.2f");
 
+			// How softly the key gives out past the terminator. The control for small height
+			// changes reading as a change in the surface rather than as a cut in it
+			ImGui::DragFloat("Key wrap", &inout_lights.keyWrap, 0.01f, 0.0f, 1.0f, "%.2f");
+
 			ImGui::Spacing();
 
 			ImGui::ColorEdit3("Sky colour", &inout_lights.skyColour.x, ImGuiColorEditFlags_Float);
@@ -164,6 +168,17 @@ namespace solar::devtools
 			ImGui::DragFloat("Ground intensity", &inout_lights.groundIntensity, 0.01f, 0.0f, 4.0f, "%.2f");
 
 			ImGui::DragFloat("Occlusion floor", &inout_lights.occlusionFloor, 0.01f, 0.0f, 1.0f, "%.2f");
+
+			// The floor sets how dark a crevice can go, this sets what colour fills it. Zero is
+			// the old flat darkening, so sliding it is the A/B
+			ImGui::DragFloat("Occlusion bounce", &inout_lights.occlusionBounce, 0.02f, 0.0f, 4.0f, "%.2f");
+
+			// The one light control that is a performance setting as much as a look one
+			ImGui::DragFloat("Shadow range", &inout_lights.shadowRange, 1.0f, 0.0f, 300.0f, "%.0f m");
+
+			// Detail smaller than this stops shadowing itself. The control for the stippling a
+			// single hard ray leaves on anything with fine relief
+			ImGui::DragFloat("Shadow skip", &inout_lights.shadowSkip, 0.002f, 0.0f, 0.3f, "%.3f m");
 
 			ImGui::Spacing();
 

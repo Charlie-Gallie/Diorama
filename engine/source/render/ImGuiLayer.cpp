@@ -5,19 +5,31 @@
 #include "backends/imgui_impl_sdlgpu3.h"
 
 #include "solar/core/Log.hpp"
+#include "solar/platform/Input.hpp"
 
 namespace solar
 {
 	ImGuiLayer::~ImGuiLayer()
 	{
-		// Initialize may never have run, or may have failed part way through.
+		// Initialize may never have run, or may have failed part way through, so each half is
+		// torn down only if it actually came up
 		if (context == nullptr)
 		{
 			return;
 		}
 
-		ImGui_ImplSDLGPU3_Shutdown();
-		ImGui_ImplSDL3_Shutdown();
+		if (isRendererStarted)
+		{
+			ImGui_ImplSDLGPU3_Shutdown();
+			isRendererStarted = false;
+		}
+
+		if (isPlatformStarted)
+		{
+			ImGui_ImplSDL3_Shutdown();
+			isPlatformStarted = false;
+		}
+
 		ImGui::DestroyContext(context);
 
 		context = nullptr;
@@ -44,6 +56,8 @@ namespace solar
 			return Error::RENDERER_FAILURE;
 		}
 
+		isPlatformStarted = true;
+
 		ImGui_ImplSDLGPU3_InitInfo info{};
 		info.ColorTargetFormat = in_gpuTexFormat;
 		info.Device = in_gpuDevice;
@@ -59,6 +73,8 @@ namespace solar
 			);
 			return Error::RENDERER_FAILURE;
 		}
+
+		isRendererStarted = true;
 
 		return Error::NONE;
 	}
@@ -78,6 +94,12 @@ namespace solar
 	void ImGuiLayer::PrepareDraw(SDL_GPUCommandBuffer* in_gpuCommandBuffer)
 	{
 		ImGui::Render();
+
+		// Published after Render, where the flags are settled for the frame. Whoever reads input
+		// next can then tell that a panel is taking it, without having to know ImGui exists
+		const ImGuiIO& io = ImGui::GetIO();
+		input::SetUiCapture(io.WantCaptureKeyboard, io.WantCaptureMouse);
+
 		ImGui_ImplSDLGPU3_PrepareDrawData(ImGui::GetDrawData(), in_gpuCommandBuffer);
 	}
 

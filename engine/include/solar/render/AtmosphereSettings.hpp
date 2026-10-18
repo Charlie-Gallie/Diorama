@@ -15,9 +15,9 @@ namespace solar
 
 		// Distance fades towards the sky in the ray's own direction rather than towards a single
 		// fog colour. That is what makes ground meet the horizon instead of ending at it
-		float fogDensity = 0.002f;
+		float fogDensity = 0.001f;
 
-		bool groundEnabled = true;
+		bool groundEnabled = false;
 
 		Vec3 groundLight = { 0.10f, 0.17f, 0.06f };
 		Vec3 groundDark = { 0.08f, 0.13f, 0.05f };

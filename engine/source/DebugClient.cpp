@@ -50,33 +50,51 @@ namespace solar
 		// Its flat ground sits 1.5 m above the model's base, so this drops that onto y = 0
 		constexpr float patchBase = -1.5f;
 
+		// Plain ground either side of it. A .vox axis stops at 6.4 m, so filling a view means
+		// instancing, and three variants turned a quarter at a time is what stops the repeat being
+		// obvious - shared block content hashes on position inside its own model, so every copy of
+		// one tile is identical
+		constexpr const char* tilePaths[3] = {
+			"assets/models/test/ground_0.vox",
+			"assets/models/test/ground_1.vox",
+			"assets/models/test/ground_2.vox"
+		};
+
+		constexpr float tileSize = 6.0f;
+		constexpr float tileBase = -0.5f;
+		constexpr int tileReach = 2;
+
 		// Everything here is hard coded because there is no scene description yet, which is the
 		// point at which these stop being lists. There are fewer models than instances because
 		// the two sponges share one
-		constexpr int sceneModelCount = 4;
-		constexpr int sceneInstanceCount = 5;
+		constexpr int sceneModelCount = 7;
+
+		// A 5 by 5 of ground with the detailed patch taking the middle, then the four props.
+		// What the scene asks for, not what it gets - the placement is bounded by
+		// maxSceneInstances and reports if it had to drop any
+		constexpr int sceneInstanceCount = 29;
 
 		constexpr int cameraPresetCount = 6;
 		constexpr int modelCount = 2;
 
-		// Each model carries its own densities because a .vox axis cannot go over 256. The shapes
-		// scene is 6.2 m along its longest axis so it cannot do 50 voxels per metre, but the car
-		// at 4.3 m has room for it
-		constexpr int maxDensityCount = 5;
+		// Both models offer the same four now. The car also had a 50 voxel version, built so the
+		// step past 40 could be judged rather than argued about - that question is settled and it
+		// is no longer loaded. The file is still in assets if it is ever wanted again
+		constexpr int maxDensityCount = 4;
 
 		constexpr const char* modelNames[modelCount] = { "Shapes", "Car" };
-		constexpr int densityCounts[modelCount] = { 4, 5 };
+		constexpr int densityCounts[modelCount] = { 4, 4 };
 
 		constexpr const char* densityNames[modelCount][maxDensityCount] = {
-			{ "40", "30", "20", "10", nullptr },
-			{ "50", "40", "30", "20", "10" }
+			{ "40", "30", "20", "10" },
+			{ "40", "30", "20", "10" }
 		};
 
 		// The same numbers again as values, because voxel size is what the renderer needs and a
 		// label is what the panel needs
 		constexpr int densityValues[modelCount][maxDensityCount] = {
-			{ 40, 30, 20, 10, 0 },
-			{ 50, 40, 30, 20, 10 }
+			{ 40, 30, 20, 10 },
+			{ 40, 30, 20, 10 }
 		};
 
 		constexpr const char* modelPaths[modelCount][maxDensityCount] = {
@@ -84,11 +102,9 @@ namespace solar
 				"assets/models/test/density_40.vox",
 				"assets/models/test/density_30.vox",
 				"assets/models/test/density_20.vox",
-				"assets/models/test/density_10.vox",
-				nullptr
+				"assets/models/test/density_10.vox"
 			},
 			{
-				"assets/models/test/car_50.vox",
 				"assets/models/test/car_40.vox",
 				"assets/models/test/car_30.vox",
 				"assets/models/test/car_20.vox",
@@ -128,9 +144,9 @@ namespace solar
 		const CameraPreset* CameraPresets()
 		{
 			static const CameraPreset presets[cameraPresetCount] = {
-				{ "Gameplay",      "9 m of height in view, 30 deg",   MakeViewPreset(sceneTarget, 45.0f, -35.0f,  9.0f, 30.0f) },
-				{ "Gameplay wide", "18 m of height in view, 30 deg",  MakeViewPreset(sceneTarget, 45.0f, -35.0f, 18.0f, 30.0f) },
-				{ "Near ortho",    "9 m framed from far back, 6 deg", MakeViewPreset(sceneTarget, 45.0f, -35.0f,  9.0f,  6.0f) },
+				{ "Gameplay",      "12 m of height in view, 30 deg",   MakeViewPreset(sceneTarget, 45.0f, -35.0f, 12.0f, 30.0f) },
+				{ "Gameplay wide", "24 m of height in view, 30 deg",   MakeViewPreset(sceneTarget, 45.0f, -35.0f, 24.0f, 30.0f) },
+				{ "Near ortho",    "12 m framed from far back, 6 deg", MakeViewPreset(sceneTarget, 45.0f, -35.0f, 12.0f,  6.0f) },
 				{ "Steep",         "7 m, pitched down for indoors",   MakeViewPreset(sceneTarget, 45.0f, -58.0f,  7.0f, 30.0f) },
 				{ "Eye level",     "3 m, stood on the ground",        MakeViewPreset(sceneTarget, 24.0f,  -4.0f,  3.0f, 32.0f) },
 				{ "Front",         "5 m, flat on for silhouettes",    MakeViewPreset(sceneTarget,  0.0f,  -8.0f,  5.0f, 25.0f) }
@@ -182,7 +198,10 @@ namespace solar
 			{ modelPaths[modelIndex][densityIndex], 1.0f / densityValues[modelIndex][densityIndex] },
 			{ figurePath, figureVoxelSize },
 			{ mengerPath, mengerVoxelSize },
-			{ patchPath, patchVoxelSize }
+			{ patchPath, patchVoxelSize },
+			{ tilePaths[0], patchVoxelSize },
+			{ tilePaths[1], patchVoxelSize },
+			{ tilePaths[2], patchVoxelSize }
 		};
 
 		// Recorded before anything is read rather than after, so a file that fails to parse is not
@@ -226,67 +245,115 @@ namespace solar
 		}
 
 
-		// Terrain first, then everything standing on it. Positions are hand placed against the
+		// Ground first, then everything standing on it. Positions are hand placed against the
 		// patch rather than derived, because the patch is a fixed mock-up and not a real scene
-		instances[0] = { .position = { 0.0f, patchBase, 0.0f }, .model = 3 };
+		int next = 0;
 
-		// Importing a .vox mirrors its depth axis as part of the Z-up to Y-up conversion, so the
-		// patch reads back to front against the layout in the generator. Everything below is in
-		// engine space and was placed by eye
+		// Every placement goes through this, so changing tileReach can only drop instances rather
+		// than write past the array. The count then comes from what was actually placed instead of
+		// from a constant that has to be kept in step by hand
+		const auto place = [this, &next](const VoxelInstance& in_instance)
+		{
+			if (next < maxSceneInstances)
+			{
+				instances[next++] = in_instance;
+			}
+		};
+
+		for (int gz = -tileReach; gz <= tileReach; ++gz)
+		{
+			for (int gx = -tileReach; gx <= tileReach; ++gx)
+			{
+				if (gx == 0 && gz == 0)
+				{
+					place({ .position = { 0.0f, patchBase, 0.0f }, .model = 3 });
+					continue;
+				}
+
+				// Scattered rather than regular, so the trees and outcrops do not land on a grid
+				const int scatter = (gx * 7 + gz * 13 + 64) % 11;
+				const int tile = scatter < 2 ? 2 : (scatter < 5 ? 1 : 0);
+
+				place({
+					.position = { gx * tileSize, tileBase, gz * tileSize },
+					.yaw = glm::radians(90.0f * (scatter % 4)),
+					.model = 4 + tile
+				});
+			}
+		}
+
 		// On the path, which runs across the middle of the patch
-		instances[1] = { .position = { 0.0f, 0.0f, 0.0f }, .yaw = glm::radians(5.0f), .model = 0 };
+		place({ .position = { 0.0f, 0.0f, 0.0f }, .yaw = glm::radians(5.0f), .model = 0 });
 
 		// Stood off the end of the car, between it and the hut
-		instances[2] = {
+		place({
 			.position = { -2.2f, 0.0f, -0.9f },
 			.yaw = glm::radians(20.0f),
 			.model = 1
-		};
+		});
 
-		instances[3] = { .position = { 2.2f, 0.0f, -1.0f }, .model = 2 };
+		place({ .position = { 2.2f, 0.0f, -1.0f }, .model = 2 });
 
 		// Turned and halved, because a cube is the one shape where both are obvious at a glance
-		instances[4] = {
+		place({
 			.position = { 2.6f, 0.0f, -2.0f },
 			.yaw = glm::radians(25.0f),
 			.scale = mengerSmallScale,
 			.model = 2
-		};
-		instanceCount = sceneInstanceCount;
+		});
+
+		instanceCount = next;
+
+		if (next < sceneInstanceCount)
+		{
+			SOLAR_LOG_WARN(
+				RENDER,
+				"The scene wanted {} instances but only {} fit, so some of it is missing",
+				sceneInstanceCount, next
+			);
+		}
 
 		return Error::NONE;
 	}
 	void DebugClient::Update(Window& inout_window, Renderer& inout_renderer, float in_deltaTime)
 	{
-		if (Pressed(input::Key::NUM_1, smoothNormalsKeyWasDown))
+		// Typing "1" into a panel field used to toggle smooth normals as well. The latches are
+		// still updated while a panel has the keyboard, so releasing a key over a text field does
+		// not fire the toggle on the frame focus is lost
+		const bool keyboardFree = input::IsUiCapturingKeyboard() == false;
+
+		if (Pressed(input::Key::NUM_1, smoothNormalsKeyWasDown) && keyboardFree)
 		{
 			shading.smoothNormals = !shading.smoothNormals;
 			SOLAR_LOG_INFO(RENDER, "Smooth normals {}", shading.smoothNormals ? "on" : "off");
 		}
 
-		if (Pressed(input::Key::NUM_2, shadowsKeyWasDown))
+		if (Pressed(input::Key::NUM_2, shadowsKeyWasDown) && keyboardFree)
 		{
 			shading.shadows = !shading.shadows;
 			SOLAR_LOG_INFO(RENDER, "Shadow rays {}", shading.shadows ? "on" : "off");
 		}
 
-		if (Pressed(input::Key::NUM_3, occlusionKeyWasDown))
+		if (Pressed(input::Key::NUM_3, occlusionKeyWasDown) && keyboardFree)
 		{
 			shading.ambientOcclusion = !shading.ambientOcclusion;
 			SOLAR_LOG_INFO(RENDER, "Ambient occlusion {}", shading.ambientOcclusion ? "on" : "off");
 		}
 
-		// Presets do not need latching because holding the key just keeps reapplying the same
-		// camera. The rest are panel only
-		if (input::IsKeyDown(input::Key::NUM_5)) { camera = CameraPresets()[0].camera; }
-		if (input::IsKeyDown(input::Key::NUM_6)) { camera = CameraPresets()[1].camera; }
+		if (keyboardFree)
+		{
+			// Presets do not need latching because holding the key just keeps reapplying the same
+			// camera. The rest are panel only
+			if (input::IsKeyDown(input::Key::NUM_5)) { camera = CameraPresets()[0].camera; }
+			if (input::IsKeyDown(input::Key::NUM_6)) { camera = CameraPresets()[1].camera; }
 
-		// The same model resampled at several densities, so switching between them changes voxels
-		// per metre and nothing else
-		if (input::IsKeyDown(input::Key::NUM_7)) { densityIndex = 0; }
-		if (input::IsKeyDown(input::Key::NUM_8)) { densityIndex = 1; }
-		if (input::IsKeyDown(input::Key::NUM_9)) { densityIndex = 2; }
-		if (input::IsKeyDown(input::Key::NUM_0)) { densityIndex = 3; }
+			// The same model resampled at several densities, so switching between them changes
+			// voxels per metre and nothing else
+			if (input::IsKeyDown(input::Key::NUM_7)) { densityIndex = 0; }
+			if (input::IsKeyDown(input::Key::NUM_8)) { densityIndex = 1; }
+			if (input::IsKeyDown(input::Key::NUM_9)) { densityIndex = 2; }
+			if (input::IsKeyDown(input::Key::NUM_0)) { densityIndex = 3; }
+		}
 
 		UpdateFlyCamera(inout_window, in_deltaTime);
 		UpdateSelection(inout_renderer);
@@ -298,7 +365,11 @@ namespace solar
 	}
 	void DebugClient::UpdateFlyCamera(Window& inout_window, float in_deltaTime)
 	{
-		const bool wantsLook = input::IsMouseButtonDown(input::MouseButton::RIGHT);
+		// A look already underway continues regardless of what the UI thinks, because relative
+		// mouse mode hides the cursor and ImGui's idea of where it is stops being meaningful.
+		// Only starting one yields, which is what stops a right-drag on a panel grabbing the view
+		const bool wantsLook = input::IsMouseButtonDown(input::MouseButton::RIGHT)
+			&& (isLooking || input::IsUiCapturingMouse() == false);
 
 		if (wantsLook != isLooking)
 		{
@@ -328,12 +399,15 @@ namespace solar
 
 		Vec3 move = { 0.0f, 0.0f, 0.0f };
 
-		if (input::IsKeyDown(input::Key::W)) { move += basis.forward; }
-		if (input::IsKeyDown(input::Key::S)) { move -= basis.forward; }
-		if (input::IsKeyDown(input::Key::D)) { move += basis.right; }
-		if (input::IsKeyDown(input::Key::A)) { move -= basis.right; }
-		if (input::IsKeyDown(input::Key::E)) { move += basis.up; }
-		if (input::IsKeyDown(input::Key::Q)) { move -= basis.up; }
+		if (input::IsUiCapturingKeyboard() == false)
+		{
+			if (input::IsKeyDown(input::Key::W)) { move += basis.forward; }
+			if (input::IsKeyDown(input::Key::S)) { move -= basis.forward; }
+			if (input::IsKeyDown(input::Key::D)) { move += basis.right; }
+			if (input::IsKeyDown(input::Key::A)) { move -= basis.right; }
+			if (input::IsKeyDown(input::Key::E)) { move += basis.up; }
+			if (input::IsKeyDown(input::Key::Q)) { move -= basis.up; }
+		}
 
 		// Normalising keeps diagonals the same speed as straight lines, and the zero check stops
 		// us normalising a zero vector

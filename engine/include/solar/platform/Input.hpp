@@ -41,4 +41,16 @@ namespace solar::input
 
 	// Motion accumulated since the previous call (in pixels) so exactly one caller per frame.
 	Vec2 ConsumeMouseDelta();
+
+	// Whether a UI is currently taking input, so typing into a debug field does not also drive
+	// the game. Recorded here rather than queried from the UI directly, because input is a
+	// platform concern and must not know which UI happens to be on top.
+	//
+	// The queries do not gate IsKeyDown and IsMouseButtonDown, which stay honest reports of the
+	// hardware. Whether a particular action should yield to the UI is the caller's decision -
+	// starting a mouse look should, continuing one already underway should not
+	void SetUiCapture(bool in_keyboard, bool in_mouse);
+
+	bool IsUiCapturingKeyboard();
+	bool IsUiCapturingMouse();
 }

@@ -15,7 +15,6 @@ struct SDL_GPUDevice;
 struct SDL_GPUGraphicsPipeline;
 struct SDL_GPUTexture;
 struct SDL_GPUSampler;
-enum SDL_GPUPresentMode;
 
 namespace solar
 {
@@ -101,9 +100,11 @@ namespace solar
 		DebugUiCallback debugUiCallback = nullptr;
 
 		// SceneData is private to the renderer, which a declaration may name without defining
-		SceneData MakeSceneData(const VoxelInstance* in_instances, int in_instanceCount) const;
-
-		SDL_GPUPresentMode PickPresentMode();
+		SceneData MakeSceneData(
+			const VoxelInstance* in_instances,
+			int in_instanceCount,
+			const Vec3& in_cameraPosition
+		) const;
 
 		[[nodiscard]] bool EnsureSceneTexture(int in_width, int in_height);
 	};
