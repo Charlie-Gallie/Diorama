@@ -492,6 +492,10 @@ namespace solar
 		int paletteBases[maxSceneModels]{};
 		int paletteUsed = 0;
 
+		// Everything is built into locals and only swapped in once nothing else can fail, so a bad
+		// reload leaves the scene that is already running exactly as it was
+		LoadedModel layout[maxSceneModels];
+
 		for (int index = 0; index < in_count; ++index)
 		{
 			const VoxelModel& model = in_models[index];
@@ -524,11 +528,11 @@ namespace solar
 			// covering the remainder
 			const IVec3 coarseSize = (size + (coarseCell - 1)) / coarseCell;
 
-			loadedModels[index].atlasOffset = { 0, 0, atlasSize.z };
-			loadedModels[index].size = size;
-			loadedModels[index].voxelSize = model.voxelSize;
-			loadedModels[index].coarseOffset = { 0, 0, coarseAtlasSize.z };
-			loadedModels[index].coarseSize = coarseSize;
+			layout[index].atlasOffset = { 0, 0, atlasSize.z };
+			layout[index].size = size;
+			layout[index].voxelSize = model.voxelSize;
+			layout[index].coarseOffset = { 0, 0, coarseAtlasSize.z };
+			layout[index].coarseSize = coarseSize;
 
 			atlasSize.x = SDL_max(atlasSize.x, size.x);
 			atlasSize.y = SDL_max(atlasSize.y, size.y);
@@ -550,26 +554,28 @@ namespace solar
 			return Error::INVALID_DATA;
 		}
 
-		// Release is deferred by SDL until the GPU has finished with the texture, so the frame
-		// already in flight keeps reading the old one safely
-		if (voxelTexture != nullptr)
+		// Created alongside the old atlas rather than in its place, so the old one is still there to
+		// fall back on if anything from here fails. Memory briefly holds both
+		SDL_GPUTexture* newVoxelTexture = CreateVoxelTexture(gpuDevice, atlasSize);
+		SDL_GPUTexture* newCoarseTexture = CreateVoxelTexture(gpuDevice, coarseAtlasSize);
+
+		const auto releaseNew = [this, newVoxelTexture, newCoarseTexture]()
 		{
-			SDL_ReleaseGPUTexture(gpuDevice, voxelTexture);
-			voxelTexture = nullptr;
-		}
+			if (newVoxelTexture != nullptr)
+			{
+				SDL_ReleaseGPUTexture(gpuDevice, newVoxelTexture);
+			}
 
-		if (coarseTexture != nullptr)
-		{
-			SDL_ReleaseGPUTexture(gpuDevice, coarseTexture);
-			coarseTexture = nullptr;
-		}
+			if (newCoarseTexture != nullptr)
+			{
+				SDL_ReleaseGPUTexture(gpuDevice, newCoarseTexture);
+			}
+		};
 
-		voxelTexture = CreateVoxelTexture(gpuDevice, atlasSize);
-		coarseTexture = CreateVoxelTexture(gpuDevice, coarseAtlasSize);
-
-		if (voxelTexture == nullptr || coarseTexture == nullptr)
+		if (newVoxelTexture == nullptr || newCoarseTexture == nullptr)
 		{
 			SOLAR_LOG_ERR(RENDER, "Failed to create voxel atlas: {}", SDL_GetError());
+			releaseNew();
 			return Error::RENDERER_FAILURE;
 		}
 
@@ -578,10 +584,11 @@ namespace solar
 		if (commandBuffer == nullptr)
 		{
 			SOLAR_LOG_ERR(RENDER, "Failed to acquire command buffer for upload: {}", SDL_GetError());
+			releaseNew();
 			return Error::RENDERER_FAILURE;
 		}
 
-		voxelPalette = voxel::Palette{};
+		voxel::Palette palette{};
 
 		SDL_GPUTransferBuffer* transferBuffers[maxSceneModels]{};
 		SDL_GPUTransferBuffer* coarseBuffers[maxSceneModels]{};
@@ -593,12 +600,12 @@ namespace solar
 		{
 			const VoxelModel& model = in_models[index];
 			const voxel::VoxelGrid& grid = *model.grid;
-			const LoadedModel& loaded = loadedModels[index];
+			const LoadedModel& loaded = layout[index];
 			const int base = paletteBases[index];
 
 			for (size_t entry = 1; entry + base < voxel::paletteSize; ++entry)
 			{
-				voxelPalette.colours[entry + base] = model.palette->colours[entry];
+				palette.colours[entry + base] = model.palette->colours[entry];
 			}
 
 			// Both built in one pass: the materials shifted clear of the other models, and a cell
@@ -637,11 +644,11 @@ namespace solar
 			}
 
 			transferBuffers[index] = UploadVoxels(
-				gpuDevice, copyPass, voxelTexture, materials, grid.size, loaded.atlasOffset.z
+				gpuDevice, copyPass, newVoxelTexture, materials, grid.size, loaded.atlasOffset.z
 			);
 
 			coarseBuffers[index] = UploadVoxels(
-				gpuDevice, copyPass, coarseTexture, coarse, loaded.coarseSize, loaded.coarseOffset.z
+				gpuDevice, copyPass, newCoarseTexture, coarse, loaded.coarseSize, loaded.coarseOffset.z
 			);
 
 			if (transferBuffers[index] == nullptr || coarseBuffers[index] == nullptr)
@@ -668,8 +675,29 @@ namespace solar
 
 		if (result != Error::NONE)
 		{
-			loadedModelCount = 0;
+			releaseNew();
 			return result;
+		}
+
+		// Release is deferred by SDL until the GPU has finished with the texture, so the frame
+		// already in flight keeps reading the old one safely
+		if (voxelTexture != nullptr)
+		{
+			SDL_ReleaseGPUTexture(gpuDevice, voxelTexture);
+		}
+
+		if (coarseTexture != nullptr)
+		{
+			SDL_ReleaseGPUTexture(gpuDevice, coarseTexture);
+		}
+
+		voxelTexture = newVoxelTexture;
+		coarseTexture = newCoarseTexture;
+		voxelPalette = palette;
+
+		for (int index = 0; index < in_count; ++index)
+		{
+			loadedModels[index] = layout[index];
 		}
 
 		loadedModelCount = in_count;
@@ -909,6 +937,16 @@ namespace solar
 			target.load_op = SDL_GPU_LOADOP_DONT_CARE;
 			target.store_op = SDL_GPU_STOREOP_STORE;
 
+			// Until a scene has uploaded there is no atlas to bind, so the target is cleared and
+			// nothing is drawn rather than handing the shader a null texture
+			const bool hasScene = voxelTexture != nullptr && coarseTexture != nullptr;
+
+			if (hasScene == false)
+			{
+				target.clear_color = { 0.0f, 0.0f, 0.0f, 1.0f };
+				target.load_op = SDL_GPU_LOADOP_CLEAR;
+			}
+
 			SDL_GPURenderPass* scenePass = SDL_BeginGPURenderPass(commandBuffer, &target, 1, nullptr);
 
 			// Aspect from the scene target, not the window: rounding to whole
@@ -926,11 +964,14 @@ namespace solar
 			SDL_PushGPUFragmentUniformData(commandBuffer, 2, &environmentData, sizeof(environmentData));
 			SDL_PushGPUFragmentUniformData(commandBuffer, 3, &sceneData, sizeof(sceneData));
 
-			SDL_BindGPUGraphicsPipeline(scenePass, graphicsPipeline);
-			SDL_GPUTexture* const volumes[] = { voxelTexture, coarseTexture };
+			if (hasScene)
+			{
+				SDL_BindGPUGraphicsPipeline(scenePass, graphicsPipeline);
+				SDL_GPUTexture* const volumes[] = { voxelTexture, coarseTexture };
 
-			SDL_BindGPUFragmentStorageTextures(scenePass, 0, volumes, 2);
-			SDL_DrawGPUPrimitives(scenePass, 3, 1, 0, 0);
+				SDL_BindGPUFragmentStorageTextures(scenePass, 0, volumes, 2);
+				SDL_DrawGPUPrimitives(scenePass, 3, 1, 0, 0);
+			}
 
 			SDL_EndGPURenderPass(scenePass);
 		}
