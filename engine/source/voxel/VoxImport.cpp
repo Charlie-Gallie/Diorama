@@ -10,6 +10,10 @@ namespace solar::voxel
 {
 	namespace
 	{
+		// MagicaVoxel's own limit, and XYZI stores each coordinate in a byte, so nothing past it
+		// could be placed anyway. Capping here also keeps the grid allocation from overflowing
+		constexpr int maxVoxAxis = 256;
+
 		// A .vox file can come from a mod, so every read is bounds checked here rather than trusted at the call sites
 		class ByteReader
 		{
@@ -209,6 +213,16 @@ namespace solar::voxel
 				if (size.x <= 0 || size.y <= 0 || size.z <= 0)
 				{
 					SOLAR_LOG_ERR(CORE, "SIZE chunk has non-positive dimensions");
+					return Error::INVALID_DATA;
+				}
+
+				if (size.x > maxVoxAxis || size.y > maxVoxAxis || size.z > maxVoxAxis)
+				{
+					SOLAR_LOG_ERR(
+						CORE,
+						"SIZE chunk claims {}x{}x{}, over the {} per axis a .vox model can have",
+						size.x, size.y, size.z, maxVoxAxis
+					);
 					return Error::INVALID_DATA;
 				}
 
