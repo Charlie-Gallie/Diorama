@@ -12,6 +12,7 @@
 #include <SDL3/SDL.h>
 
 #include <algorithm>
+#include <array>
 #include <vector>
 
 namespace solar
@@ -487,9 +488,10 @@ namespace solar
 		IVec3 atlasSize = { 0, 0, 0 };
 		IVec3 coarseAtlasSize = { 0, 0, 0 };
 
-		// One palette serves the whole scene, so each model's indices are shifted clear of every
-		// other model's and the voxel data is remapped to match as it uploads
-		int paletteBases[maxSceneModels]{};
+		// One palette serves the whole scene, so each colour a model actually uses is given its own
+		// slot in it and the voxel data is remapped to match as it uploads. Counting only the used
+		// colours matters because an artist can pick them from anywhere in a model's 256
+		std::array<uint8_t, voxel::paletteSize> paletteRemaps[maxSceneModels]{};
 		int paletteUsed = 0;
 
 		// Everything is built into locals and only swapped in once nothing else can fail, so a bad
@@ -514,15 +516,21 @@ namespace solar
 				return Error::INVALID_DATA;
 			}
 
-			int highestMaterial = 0;
+			bool materialUsed[voxel::paletteSize]{};
 
 			for (const uint8_t material : model.grid->materials)
 			{
-				highestMaterial = SDL_max(highestMaterial, static_cast<int>(material));
+				materialUsed[material] = true;
 			}
 
-			paletteBases[index] = paletteUsed;
-			paletteUsed += highestMaterial;
+			// Slots past the end wrap, but the scene is rejected below before any of them is used
+			for (size_t material = 1; material < voxel::paletteSize; ++material)
+			{
+				if (materialUsed[material])
+				{
+					paletteRemaps[index][material] = static_cast<uint8_t>(++paletteUsed);
+				}
+			}
 
 			// Rounded up, so a model whose size is not a whole number of cells still gets a cell
 			// covering the remainder
@@ -601,14 +609,17 @@ namespace solar
 			const VoxelModel& model = in_models[index];
 			const voxel::VoxelGrid& grid = *model.grid;
 			const LoadedModel& loaded = layout[index];
-			const int base = paletteBases[index];
+			const std::array<uint8_t, voxel::paletteSize>& remap = paletteRemaps[index];
 
-			for (size_t entry = 1; entry + base < voxel::paletteSize; ++entry)
+			for (size_t entry = 1; entry < voxel::paletteSize; ++entry)
 			{
-				palette.colours[entry + base] = model.palette->colours[entry];
+				if (remap[entry] != 0)
+				{
+					palette.colours[remap[entry]] = model.palette->colours[entry];
+				}
 			}
 
-			// Both built in one pass: the materials shifted clear of the other models, and a cell
+			// Both built in one pass: the materials remapped into the shared palette, and a cell
 			// marked for every voxel that turns out to be solid. Air leaves each alone, so the
 			// vectors start as all air and only the solid voxels are written
 			std::vector<uint8_t> materials(grid.materials.size(), 0);
@@ -631,7 +642,7 @@ namespace solar
 							continue;
 						}
 
-						materials[at] = static_cast<uint8_t>(material + base);
+						materials[at] = remap[material];
 
 						coarse[voxel::VoxelIndex(
 							loaded.coarseSize,
