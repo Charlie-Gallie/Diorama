@@ -101,6 +101,17 @@ target_compile_definitions(solar_flags INTERFACE
     SOLAR_LOG_TRACE_ENABLED=$<IF:$<CONFIG:Shipping>,0,1>
 )
 
+# --- Warnings ---
+# Linked PRIVATE by our own targets only, so third-party code keeps its own settings
+# C4668 and -Wundef are what make an undefined flag in an #if a warning, which /W4 alone leaves off
+add_library(solar_warnings INTERFACE)
+add_library(solar::warnings ALIAS solar_warnings)
+
+target_compile_options(solar_warnings INTERFACE
+    $<$<CXX_COMPILER_FRONTEND_VARIANT:MSVC>:/W4 /w14668>
+    $<$<NOT:$<CXX_COMPILER_FRONTEND_VARIANT:MSVC>>:-Wall -Wextra -Wpedantic -Wundef>
+)
+
 # --- Assets ---
 # Copied next to the executable so paths can be resolved from SDL_GetBasePath rather than the working directory
 # which differs between F5, a shortcut and a shipped install.

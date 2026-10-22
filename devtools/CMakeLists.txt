@@ -9,6 +9,7 @@ target_include_directories(solar_devtools PUBLIC include)
 
 # Consumers of devtools inevitably use engine types too.
 target_link_libraries(solar_devtools PUBLIC solar::engine)
+target_link_libraries(solar_devtools PRIVATE solar::warnings)
 
 # ImGui is how the panels are drawn, but that is an implementation detail so devtools
 # own headers must not expose it

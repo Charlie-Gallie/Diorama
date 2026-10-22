@@ -24,6 +24,7 @@ target_compile_definitions(solar_engine PRIVATE
 
 # PUBLIC: feature flags must be identical in every target that links the engine
 target_link_libraries(solar_engine PUBLIC solar::flags)
+target_link_libraries(solar_engine PRIVATE solar::warnings)
 
 # PUBLIC: glm types appear in public headers (solar/core/Math.hpp)
 target_link_libraries(solar_engine PUBLIC glm::glm)

@@ -1,6 +1,6 @@
 add_executable(client source/main.cpp)
 
-target_link_libraries(client PRIVATE solar::engine)
+target_link_libraries(client PRIVATE solar::engine solar::warnings)
 
 # Dev tools are linked per executable rather than compiled into the engine
 # There might be a "studio" executable in the future which will want devtools
