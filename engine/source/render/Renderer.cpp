@@ -2,8 +2,9 @@
 
 #include "CameraData.hpp"
 #include "EnvironmentData.hpp"
-#include "ImGuiLayer.hpp"
+#include "GpuResources.hpp"
 #include "SceneData.hpp"
+#include "solar/core/Assert.hpp"
 #include "solar/core/Log.hpp"
 #include "solar/platform/Window.hpp"
 #include "solar/core/Filesystem.hpp"
@@ -13,6 +14,7 @@
 
 #include <algorithm>
 #include <array>
+#include <utility>
 #include <vector>
 
 namespace solar
@@ -143,7 +145,7 @@ namespace solar
 
 		// Returns the transfer buffer rather than releasing it, because SDL only keeps it alive
 		// until the copy completes and the caller owns the command buffer that will do it
-		SDL_GPUTransferBuffer* UploadVoxels(
+		GpuHandle<SDL_GPUTransferBuffer> UploadVoxels(
 			SDL_GPUDevice* in_gpuDevice,
 			SDL_GPUCopyPass* in_copyPass,
 			SDL_GPUTexture* in_texture,
@@ -156,28 +158,29 @@ namespace solar
 			transferInfo.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
 			transferInfo.size = static_cast<Uint32>(in_data.size());
 
-			SDL_GPUTransferBuffer* transferBuffer = SDL_CreateGPUTransferBuffer(in_gpuDevice, &transferInfo);
+			GpuHandle<SDL_GPUTransferBuffer> transferBuffer(
+				in_gpuDevice, SDL_CreateGPUTransferBuffer(in_gpuDevice, &transferInfo)
+			);
 
-			if (transferBuffer == nullptr)
+			if (transferBuffer.Get() == nullptr)
 			{
 				SOLAR_LOG_ERR(RENDER, "Failed to create transfer buffer: {}", SDL_GetError());
-				return nullptr;
+				return {};
 			}
 
-			void* mapped = SDL_MapGPUTransferBuffer(in_gpuDevice, transferBuffer, false);
+			void* mapped = SDL_MapGPUTransferBuffer(in_gpuDevice, transferBuffer.Get(), false);
 
 			if (mapped == nullptr)
 			{
 				SOLAR_LOG_ERR(RENDER, "Failed to map transfer buffer: {}", SDL_GetError());
-				SDL_ReleaseGPUTransferBuffer(in_gpuDevice, transferBuffer);
-				return nullptr;
+				return {};
 			}
 
 			SDL_memcpy(mapped, in_data.data(), in_data.size());
-			SDL_UnmapGPUTransferBuffer(in_gpuDevice, transferBuffer);
+			SDL_UnmapGPUTransferBuffer(in_gpuDevice, transferBuffer.Get());
 
 			SDL_GPUTextureTransferInfo source{};
-			source.transfer_buffer = transferBuffer;
+			source.transfer_buffer = transferBuffer.Get();
 
 			SDL_GPUTextureRegion destination{};
 			destination.texture = in_texture;
@@ -191,7 +194,7 @@ namespace solar
 			return transferBuffer;
 		}
 
-		SDL_GPUShader* LoadShader(SDL_GPUDevice* in_gpuDevice, const char* in_path, SDL_GPUShaderStage in_shaderStage, Uint32 in_numUniformBuffers, Uint32 in_numStorageTextures, Uint32 in_numSamplers)
+		GpuHandle<SDL_GPUShader> LoadShader(SDL_GPUDevice* in_gpuDevice, const char* in_path, SDL_GPUShaderStage in_shaderStage, Uint32 in_numUniformBuffers, Uint32 in_numStorageTextures, Uint32 in_numSamplers)
 		{
 			filesystem::Buffer buffer;
 
@@ -201,7 +204,7 @@ namespace solar
 					RENDER,
 					"Failed to load shader file \"{}\": {}", in_path, SDL_GetError()
 				);
-				return nullptr;
+				return {};
 			}
 
 			SDL_GPUShaderCreateInfo info{};
@@ -214,83 +217,35 @@ namespace solar
 			info.num_uniform_buffers = in_numUniformBuffers;
 			info.num_storage_textures = in_numStorageTextures;
 
-			SDL_GPUShader* gpuShader = SDL_CreateGPUShader(in_gpuDevice, &info);
-			if (gpuShader == NULL)
+			GpuHandle<SDL_GPUShader> gpuShader(in_gpuDevice, SDL_CreateGPUShader(in_gpuDevice, &info));
+			if (gpuShader.Get() == nullptr)
 			{
 				SOLAR_LOG_ERR(
 					RENDER,
 					"Failed to create GPU shader: {}", SDL_GetError()
 				);
-				return nullptr;
+				return {};
 			}
 
 			return gpuShader;
 		}
 	}
 
-	Renderer::~Renderer()
-	{
-		// We explicitly delete imGuiLayer here before anything else because
-		// it uses resources held by this object
-		delete imGuiLayer;
-		imGuiLayer = nullptr;
-
-		if (nearestSampler != nullptr)
-		{
-			SDL_ReleaseGPUSampler(gpuDevice, nearestSampler);
-		}
-
-		if (sceneTexture != nullptr)
-		{
-			SDL_ReleaseGPUTexture(gpuDevice, sceneTexture);
-		}
-
-		if (presentPipeline != nullptr)
-		{
-			SDL_ReleaseGPUGraphicsPipeline(gpuDevice, presentPipeline);
-		}
-
-		if (coarseTexture != nullptr)
-		{
-			SDL_ReleaseGPUTexture(gpuDevice, coarseTexture);
-		}
-
-		if (voxelTexture != nullptr)
-		{
-			SDL_ReleaseGPUTexture(gpuDevice, voxelTexture);
-		}
-
-		if (graphicsPipeline != nullptr)
-		{
-			SDL_ReleaseGPUGraphicsPipeline(gpuDevice, graphicsPipeline);
-		}
-
-		if (isClaimed)
-		{
-			SDL_ReleaseWindowFromGPUDevice(gpuDevice, sdlWindow);
-		}
-
-		if (gpuDevice != nullptr)
-		{
-			SDL_DestroyGPUDevice(gpuDevice);
-		}
-	}
+	// Defined here rather than in the header, where GpuResources is incomplete
+	Renderer::Renderer() = default;
+	Renderer::~Renderer() = default;
 
 	Error Renderer::Initialize(Window& in_window, DebugUiCallback in_debugUiCallback)
 	{
-		sdlWindow = in_window.GetHandle();
+		SDL_Window* const sdlWindow = in_window.GetHandle();
 		debugUiCallback = in_debugUiCallback;
+
+		gpu = std::make_unique<GpuResources>();
 
 		// TODO: advertise DXIL and MSL once the shader toolchain produces them.
 		// Only offering SPIR-V means SDL will always select Vulkan, including on
 		// Windows where D3D12 would be the better default.
-		gpuDevice = SDL_CreateGPUDevice(
-			SDL_GPU_SHADERFORMAT_SPIRV,
-			enableGpuDebug,
-			nullptr
-		);
-
-		if (gpuDevice == nullptr)
+		if (gpu->device.Create(SDL_GPU_SHADERFORMAT_SPIRV, enableGpuDebug) == false)
 		{
 			SOLAR_LOG_ERR(
 				RENDER,
@@ -298,6 +253,8 @@ namespace solar
 			);
 			return Error::RENDERER_FAILURE;
 		}
+
+		SDL_GPUDevice* const gpuDevice = gpu->device.Get();
 
 		// Checked up front rather than discovered as a null texture later. Every Vulkan
 		// implementation we care about supports this, so a failure here means something is very
@@ -316,7 +273,7 @@ namespace solar
 			return Error::RENDERER_FAILURE;
 		}
 
-		if (SDL_ClaimWindowForGPUDevice(gpuDevice, sdlWindow) == false)
+		if (gpu->device.ClaimWindow(sdlWindow) == false)
 		{
 			SOLAR_LOG_ERR(
 				RENDER,
@@ -324,8 +281,6 @@ namespace solar
 			);
 			return Error::RENDERER_FAILURE;
 		}
-
-		isClaimed = true;
 
 		SDL_GPUPresentMode presentMode = PickPresentMode(gpuDevice, sdlWindow);
 
@@ -350,13 +305,12 @@ namespace solar
 			return Error::RENDERER_FAILURE;
 		}
 
-		imGuiLayer = new ImGuiLayer();
-		if (imGuiLayer->Initialize(gpuDevice, sdlWindow, swapchainFormat, presentMode) != Error::NONE)
+		if (gpu->imGuiLayer.Initialize(gpuDevice, sdlWindow, swapchainFormat, presentMode) != Error::NONE)
 		{
 			return Error::RENDERER_FAILURE;
 		}
 
-		SDL_GPUShader* vertShader = LoadShader(
+		const GpuHandle<SDL_GPUShader> vertShader = LoadShader(
 			gpuDevice,
 			"shaders/Fullscreen.vert.spv",
 			SDL_GPU_SHADERSTAGE_VERTEX,
@@ -365,7 +319,7 @@ namespace solar
 			0
 		);
 
-		if (vertShader == nullptr)
+		if (vertShader.Get() == nullptr)
 		{
 			return Error::RENDERER_FAILURE;
 		}
@@ -373,7 +327,7 @@ namespace solar
 		// Four uniform buffers: camera, palette, environment, scene. This has to match the number
 		// of cbuffers the shader declares or the bindings silently slide along by one, and four
 		// is also as many as SDL_GPU allows per stage
-		SDL_GPUShader* fragShader = LoadShader(
+		const GpuHandle<SDL_GPUShader> fragShader = LoadShader(
 			gpuDevice,
 			"shaders/Fullscreen.frag.spv",
 			SDL_GPU_SHADERSTAGE_FRAGMENT,
@@ -382,9 +336,8 @@ namespace solar
 			0
 		);
 
-		if (fragShader == nullptr)
+		if (fragShader.Get() == nullptr)
 		{
-			SDL_ReleaseGPUShader(gpuDevice, vertShader);
 			return Error::RENDERER_FAILURE;
 		}
 
@@ -394,8 +347,8 @@ namespace solar
 		sceneTarget.format = sceneFormat;
 
 		SDL_GPUGraphicsPipelineCreateInfo info{};
-		info.vertex_shader = vertShader;
-		info.fragment_shader = fragShader;
+		info.vertex_shader = vertShader.Get();
+		info.fragment_shader = fragShader.Get();
 		info.primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
 
 		info.rasterizer_state.fill_mode = SDL_GPU_FILLMODE_FILL;
@@ -404,13 +357,12 @@ namespace solar
 		info.target_info.color_target_descriptions = &sceneTarget;
 		info.target_info.num_color_targets = 1;
 
-		graphicsPipeline = SDL_CreateGPUGraphicsPipeline(gpuDevice, &info);
+		gpu->graphicsPipeline = GpuHandle<SDL_GPUGraphicsPipeline>(
+			gpuDevice, SDL_CreateGPUGraphicsPipeline(gpuDevice, &info)
+		);
 
-		SDL_ReleaseGPUShader(gpuDevice, fragShader);
-
-		if (graphicsPipeline == nullptr)
+		if (gpu->graphicsPipeline.Get() == nullptr)
 		{
-			SDL_ReleaseGPUShader(gpuDevice, vertShader);
 			SOLAR_LOG_ERR(
 				RENDER,
 				"Failed to create graphics pipeline: {}", SDL_GetError()
@@ -419,7 +371,7 @@ namespace solar
 		}
 
 		// The present pass reuses the same fullscreen triangle vertex shader.
-		SDL_GPUShader* presentFragShader = LoadShader(
+		const GpuHandle<SDL_GPUShader> presentFragShader = LoadShader(
 			gpuDevice,
 			"shaders/Present.frag.spv",
 			SDL_GPU_SHADERSTAGE_FRAGMENT,
@@ -428,9 +380,8 @@ namespace solar
 			1
 		);
 
-		if (presentFragShader == nullptr)
+		if (presentFragShader.Get() == nullptr)
 		{
-			SDL_ReleaseGPUShader(gpuDevice, vertShader);
 			return Error::RENDERER_FAILURE;
 		}
 
@@ -438,8 +389,8 @@ namespace solar
 		presentTarget.format = swapchainFormat;
 
 		SDL_GPUGraphicsPipelineCreateInfo presentInfo{};
-		presentInfo.vertex_shader = vertShader;
-		presentInfo.fragment_shader = presentFragShader;
+		presentInfo.vertex_shader = vertShader.Get();
+		presentInfo.fragment_shader = presentFragShader.Get();
 		presentInfo.primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
 
 		presentInfo.rasterizer_state.fill_mode = SDL_GPU_FILLMODE_FILL;
@@ -448,12 +399,11 @@ namespace solar
 		presentInfo.target_info.color_target_descriptions = &presentTarget;
 		presentInfo.target_info.num_color_targets = 1;
 
-		presentPipeline = SDL_CreateGPUGraphicsPipeline(gpuDevice, &presentInfo);
+		gpu->presentPipeline = GpuHandle<SDL_GPUGraphicsPipeline>(
+			gpuDevice, SDL_CreateGPUGraphicsPipeline(gpuDevice, &presentInfo)
+		);
 
-		SDL_ReleaseGPUShader(gpuDevice, vertShader);
-		SDL_ReleaseGPUShader(gpuDevice, presentFragShader);
-
-		if (presentPipeline == nullptr)
+		if (gpu->presentPipeline.Get() == nullptr)
 		{
 			SOLAR_LOG_ERR(RENDER, "Failed to create present pipeline: {}", SDL_GetError());
 			return Error::RENDERER_FAILURE;
@@ -469,9 +419,9 @@ namespace solar
 		samplerInfo.address_mode_v = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
 		samplerInfo.address_mode_w = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
 
-		nearestSampler = SDL_CreateGPUSampler(gpuDevice, &samplerInfo);
+		gpu->nearestSampler = GpuHandle<SDL_GPUSampler>(gpuDevice, SDL_CreateGPUSampler(gpuDevice, &samplerInfo));
 
-		if (nearestSampler == nullptr)
+		if (gpu->nearestSampler.Get() == nullptr)
 		{
 			SOLAR_LOG_ERR(RENDER, "Failed to create sampler: {}", SDL_GetError());
 			return Error::RENDERER_FAILURE;
@@ -483,6 +433,10 @@ namespace solar
 
 	Error Renderer::SetVoxelModels(const VoxelModel* in_models, int in_count)
 	{
+		SOLAR_ASSERT(gpu != nullptr, "SetVoxelModels called before Initialize");
+
+		SDL_GPUDevice* const gpuDevice = gpu->device.Get();
+
 		if (in_models == nullptr || in_count <= 0 || in_count > maxSceneModels)
 		{
 			SOLAR_LOG_ERR(RENDER, "A scene needs 1 to {} models, was given {}", maxSceneModels, in_count);
@@ -571,26 +525,12 @@ namespace solar
 
 		// Created alongside the old atlas rather than in its place, so the old one is still there to
 		// fall back on if anything from here fails. Memory briefly holds both
-		SDL_GPUTexture* newVoxelTexture = CreateVoxelTexture(gpuDevice, atlasSize);
-		SDL_GPUTexture* newCoarseTexture = CreateVoxelTexture(gpuDevice, coarseAtlasSize);
+		GpuHandle<SDL_GPUTexture> newVoxelTexture(gpuDevice, CreateVoxelTexture(gpuDevice, atlasSize));
+		GpuHandle<SDL_GPUTexture> newCoarseTexture(gpuDevice, CreateVoxelTexture(gpuDevice, coarseAtlasSize));
 
-		const auto releaseNew = [this, newVoxelTexture, newCoarseTexture]()
-		{
-			if (newVoxelTexture != nullptr)
-			{
-				SDL_ReleaseGPUTexture(gpuDevice, newVoxelTexture);
-			}
-
-			if (newCoarseTexture != nullptr)
-			{
-				SDL_ReleaseGPUTexture(gpuDevice, newCoarseTexture);
-			}
-		};
-
-		if (newVoxelTexture == nullptr || newCoarseTexture == nullptr)
+		if (newVoxelTexture.Get() == nullptr || newCoarseTexture.Get() == nullptr)
 		{
 			SOLAR_LOG_ERR(RENDER, "Failed to create voxel atlas: {}", SDL_GetError());
-			releaseNew();
 			return Error::RENDERER_FAILURE;
 		}
 
@@ -599,14 +539,15 @@ namespace solar
 		if (commandBuffer == nullptr)
 		{
 			SOLAR_LOG_ERR(RENDER, "Failed to acquire command buffer for upload: {}", SDL_GetError());
-			releaseNew();
 			return Error::RENDERER_FAILURE;
 		}
 
 		voxel::Palette palette{};
 
-		SDL_GPUTransferBuffer* transferBuffers[maxSceneModels]{};
-		SDL_GPUTransferBuffer* coarseBuffers[maxSceneModels]{};
+		// Released on the way out of this function, after the submit. SDL keeps each one alive until
+		// its copy completes
+		GpuHandle<SDL_GPUTransferBuffer> transferBuffers[maxSceneModels];
+		GpuHandle<SDL_GPUTransferBuffer> coarseBuffers[maxSceneModels];
 		SDL_GPUCopyPass* copyPass = SDL_BeginGPUCopyPass(commandBuffer);
 
 		Error result = Error::NONE;
@@ -662,14 +603,14 @@ namespace solar
 			}
 
 			transferBuffers[index] = UploadVoxels(
-				gpuDevice, copyPass, newVoxelTexture, materials, grid.size, loaded.atlasOffset.z
+				gpuDevice, copyPass, newVoxelTexture.Get(), materials, grid.size, loaded.atlasOffset.z
 			);
 
 			coarseBuffers[index] = UploadVoxels(
-				gpuDevice, copyPass, newCoarseTexture, coarse, loaded.coarseSize, loaded.coarseOffset.z
+				gpuDevice, copyPass, newCoarseTexture.Get(), coarse, loaded.coarseSize, loaded.coarseOffset.z
 			);
 
-			if (transferBuffers[index] == nullptr || coarseBuffers[index] == nullptr)
+			if (transferBuffers[index].Get() == nullptr || coarseBuffers[index].Get() == nullptr)
 			{
 				result = Error::RENDERER_FAILURE;
 			}
@@ -677,40 +618,15 @@ namespace solar
 		SDL_EndGPUCopyPass(copyPass);
 		SDL_SubmitGPUCommandBuffer(commandBuffer);
 
-		// Safe to release immediately: SDL keeps each alive until its copy completes
-		for (int index = 0; index < maxSceneModels; ++index)
-		{
-			if (transferBuffers[index] != nullptr)
-			{
-				SDL_ReleaseGPUTransferBuffer(gpuDevice, transferBuffers[index]);
-			}
-
-			if (coarseBuffers[index] != nullptr)
-			{
-				SDL_ReleaseGPUTransferBuffer(gpuDevice, coarseBuffers[index]);
-			}
-		}
-
 		if (result != Error::NONE)
 		{
-			releaseNew();
 			return result;
 		}
 
-		// Release is deferred by SDL until the GPU has finished with the texture, so the frame
-		// already in flight keeps reading the old one safely
-		if (voxelTexture != nullptr)
-		{
-			SDL_ReleaseGPUTexture(gpuDevice, voxelTexture);
-		}
-
-		if (coarseTexture != nullptr)
-		{
-			SDL_ReleaseGPUTexture(gpuDevice, coarseTexture);
-		}
-
-		voxelTexture = newVoxelTexture;
-		coarseTexture = newCoarseTexture;
+		// The old textures are released as these replace them, and SDL defers that until the GPU
+		// has finished with them, so the frame already in flight keeps reading the old ones safely
+		gpu->voxelTexture = std::move(newVoxelTexture);
+		gpu->coarseTexture = std::move(newCoarseTexture);
 		voxelPalette = palette;
 
 		for (int index = 0; index < in_count; ++index)
@@ -831,16 +747,12 @@ namespace solar
 
 	bool Renderer::EnsureSceneTexture(int in_width, int in_height)
 	{
-		if (sceneTexture != nullptr && sceneWidth == in_width && sceneHeight == in_height)
+		if (gpu->sceneTexture.Get() != nullptr && sceneWidth == in_width && sceneHeight == in_height)
 		{
 			return true;
 		}
 
-		if (sceneTexture != nullptr)
-		{
-			SDL_ReleaseGPUTexture(gpuDevice, sceneTexture);
-			sceneTexture = nullptr;
-		}
+		gpu->sceneTexture.Reset();
 
 		SDL_GPUTextureCreateInfo info{};
 		info.type = SDL_GPU_TEXTURETYPE_2D;
@@ -851,9 +763,11 @@ namespace solar
 		info.layer_count_or_depth = 1;
 		info.num_levels = 1;
 
-		sceneTexture = SDL_CreateGPUTexture(gpuDevice, &info);
+		gpu->sceneTexture = GpuHandle<SDL_GPUTexture>(
+			gpu->device.Get(), SDL_CreateGPUTexture(gpu->device.Get(), &info)
+		);
 
-		if (sceneTexture == nullptr)
+		if (gpu->sceneTexture.Get() == nullptr)
 		{
 			SOLAR_LOG_ERR(RENDER, "Failed to create scene texture: {}", SDL_GetError());
 			sceneWidth = 0;
@@ -876,6 +790,11 @@ namespace solar
 		DebugUiContext& inout_debugUi
 	)
 	{
+		SOLAR_ASSERT(gpu != nullptr, "Render called before Initialize");
+
+		SDL_GPUDevice* const gpuDevice = gpu->device.Get();
+		SDL_Window* const sdlWindow = gpu->device.GetClaimedWindow();
+
 		SDL_GPUCommandBuffer* commandBuffer = SDL_AcquireGPUCommandBuffer(gpuDevice);
 
 		if (commandBuffer == nullptr)
@@ -930,7 +849,7 @@ namespace solar
 			return;
 		}
 
-		imGuiLayer->NewFrame();
+		gpu->imGuiLayer.NewFrame();
 
 		if (debugUiCallback != nullptr)
 		{
@@ -943,12 +862,12 @@ namespace solar
 		}
 
 		// Uploads buffers through a copy pass, so it cannot run inside a render pass.
-		imGuiLayer->PrepareDraw(commandBuffer);
+		gpu->imGuiLayer.PrepareDraw(commandBuffer);
 
 		// Pass 1: the scene, at internal resolution.
 		{
 			SDL_GPUColorTargetInfo target{};
-			target.texture = sceneTexture;
+			target.texture = gpu->sceneTexture.Get();
 
 			// The scene shader is a fullscreen triangle that returns a colour on every path, so
 			// every texel is written and there is nothing here worth clearing or preserving.
@@ -959,7 +878,7 @@ namespace solar
 
 			// Until a scene has uploaded there is no atlas to bind, so the target is cleared and
 			// nothing is drawn rather than handing the shader a null texture
-			const bool hasScene = voxelTexture != nullptr && coarseTexture != nullptr;
+			const bool hasScene = gpu->voxelTexture.Get() != nullptr && gpu->coarseTexture.Get() != nullptr;
 
 			if (hasScene == false)
 			{
@@ -988,8 +907,8 @@ namespace solar
 
 			if (hasScene)
 			{
-				SDL_BindGPUGraphicsPipeline(scenePass, graphicsPipeline);
-				SDL_GPUTexture* const volumes[] = { voxelTexture, coarseTexture };
+				SDL_BindGPUGraphicsPipeline(scenePass, gpu->graphicsPipeline.Get());
+				SDL_GPUTexture* const volumes[] = { gpu->voxelTexture.Get(), gpu->coarseTexture.Get() };
 
 				SDL_BindGPUFragmentStorageTextures(scenePass, 0, volumes, 2);
 				SDL_DrawGPUPrimitives(scenePass, 3, 1, 0, 0);
@@ -1026,8 +945,8 @@ namespace solar
 			SDL_SetGPUViewport(presentPass, &viewport);
 
 			SDL_GPUTextureSamplerBinding binding{};
-			binding.texture = sceneTexture;
-			binding.sampler = nearestSampler;
+			binding.texture = gpu->sceneTexture.Get();
+			binding.sampler = gpu->nearestSampler.Get();
 
 			const Vec4 presentData = {
 				static_cast<float>(sceneWidth),
@@ -1038,7 +957,7 @@ namespace solar
 
 			SDL_PushGPUFragmentUniformData(commandBuffer, 0, &presentData, sizeof(presentData));
 
-			SDL_BindGPUGraphicsPipeline(presentPass, presentPipeline);
+			SDL_BindGPUGraphicsPipeline(presentPass, gpu->presentPipeline.Get());
 			SDL_BindGPUFragmentSamplers(presentPass, 0, &binding, 1);
 			SDL_DrawGPUPrimitives(presentPass, 3, 1, 0, 0);
 
@@ -1051,7 +970,7 @@ namespace solar
 
 			SDL_SetGPUViewport(presentPass, &fullViewport);
 
-			imGuiLayer->Draw(commandBuffer, presentPass);
+			gpu->imGuiLayer.Draw(commandBuffer, presentPass);
 
 			SDL_EndGPURenderPass(presentPass);
 		}

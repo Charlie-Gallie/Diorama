@@ -9,28 +9,23 @@
 #include "solar/render/VoxelModel.hpp"
 #include "solar/voxel/Palette.hpp"
 
-/* Forward declarations */
-struct SDL_Window;
-struct SDL_GPUDevice;
-struct SDL_GPUGraphicsPipeline;
-struct SDL_GPUTexture;
-struct SDL_GPUSampler;
+#include <memory>
 
 namespace solar
 {
 	struct SceneData;
+	struct GpuResources;
 	class Window;
-	class ImGuiLayer;
 	struct Camera;
 
 	class Renderer
 	{
 	public:
-		Renderer() = default;
+		Renderer();
 		~Renderer();
 
-		// Owns a GPU device handle, so it is neither copyable nor movable.
-		// Declaring the destructor already suppresses the implicit moves.
+		// Owns the GPU device and ImGui's global context, so it is neither copyable nor movable.
+		// Declaring the destructor already suppresses the implicit moves
 		Renderer(const Renderer&) = delete;
 		Renderer& operator=(const Renderer&) = delete;
 
@@ -59,15 +54,9 @@ namespace solar
 		[[nodiscard]] Error SetVoxelModels(const VoxelModel* in_models, int in_count);
 
 	private:
-		SDL_Window* sdlWindow = nullptr;
-		SDL_GPUDevice* gpuDevice = nullptr;
-		SDL_GPUGraphicsPipeline* graphicsPipeline = nullptr;
-		SDL_GPUGraphicsPipeline* presentPipeline = nullptr;
+		// Private to the renderer so no SDL type reaches this header. Null until Initialize
+		std::unique_ptr<GpuResources> gpu;
 
-		// The scene renders here at a fixed internal height, then is upscaled by a
-		// whole number of pixels so voxel edges stay crisp.
-		SDL_GPUTexture* sceneTexture = nullptr;
-		SDL_GPUSampler* nearestSampler = nullptr;
 		ShadingSettings shading;
 		LightSettings lights;
 		AtmosphereSettings atmosphere;
@@ -85,19 +74,12 @@ namespace solar
 			IVec3 coarseSize = { 0, 0, 0 };
 		};
 
-		// Every model shares one 3D texture, so a scene draws from a single binding. The coarse
-		// texture is the same thing one cell per block of voxels, for skipping empty space
-		SDL_GPUTexture* voxelTexture = nullptr;
-		SDL_GPUTexture* coarseTexture = nullptr;
 		LoadedModel loadedModels[maxSceneModels];
 		int loadedModelCount = 0;
 
 		// Laid out exactly as the shader's float4[256], so it uploads directly.
 		voxel::Palette voxelPalette;
-		bool isClaimed = false;
 
-		// Using a pointer so we can properly handle its lifetime
-		ImGuiLayer* imGuiLayer = nullptr;
 		DebugUiCallback debugUiCallback = nullptr;
 
 		// SceneData is private to the renderer, which a declaration may name without defining
