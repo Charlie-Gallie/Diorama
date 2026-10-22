@@ -2,6 +2,7 @@ add_library(solar_engine STATIC
 	"source/DebugClient.cpp"
 	"source/Engine.cpp"
 	"source/platform/Window.cpp"
+	"source/core/Assert.cpp"
 	"source/core/Error.cpp"
 	"source/platform/Events.cpp"
 	"source/platform/Platform.cpp"

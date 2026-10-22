@@ -99,6 +99,8 @@ target_compile_definitions(solar_flags INTERFACE
     # even be evaluated there.
     SOLAR_LOG_LOCATION_ENABLED=$<IF:$<CONFIG:Shipping>,0,1>
     SOLAR_LOG_TRACE_ENABLED=$<IF:$<CONFIG:Shipping>,0,1>
+
+    SOLAR_ASSERTS_ENABLED=$<IF:$<CONFIG:Shipping>,0,1>
 )
 
 # --- Warnings ---
