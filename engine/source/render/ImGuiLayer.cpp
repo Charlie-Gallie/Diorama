@@ -1,14 +1,23 @@
 #include "ImGuiLayer.hpp"
 
-#include <imgui.h>
-#include "backends/imgui_impl_sdl3.h"
-#include "backends/imgui_impl_sdlgpu3.h"
-
+#include "platform/EventObservers.hpp"
 #include "solar/core/Log.hpp"
 #include "solar/platform/Input.hpp"
 
+#include <backends/imgui_impl_sdl3.h>
+#include <backends/imgui_impl_sdlgpu3.h>
+#include <imgui.h>
+
 namespace solar
 {
+	namespace
+	{
+		void ForwardEvent(const SDL_Event& in_event)
+		{
+			ImGui_ImplSDL3_ProcessEvent(&in_event);
+		}
+	}
+
 	ImGuiLayer::~ImGuiLayer()
 	{
 		// Initialize may never have run, or may have failed part way through, so each half is
@@ -26,6 +35,7 @@ namespace solar
 
 		if (isPlatformStarted)
 		{
+			RemoveEventObserver(ForwardEvent);
 			ImGui_ImplSDL3_Shutdown();
 			isPlatformStarted = false;
 		}
@@ -48,6 +58,15 @@ namespace solar
 
 		context = ImGui::CreateContext();
 		ImGui::StyleColorsDark();
+
+		// Beside the executable, like everything else, rather than wherever the working directory
+		// happens to be. ImGui keeps the pointer, so the string has to outlive the context
+		if (const char* basePath = SDL_GetBasePath(); basePath != nullptr)
+		{
+			iniPath = std::string(basePath) + "imgui.ini";
+			ImGui::GetIO().IniFilename = iniPath.c_str();
+		}
+
 		if (ImGui_ImplSDL3_InitForSDLGPU(sdlWindow) == false)
 		{
 			SOLAR_LOG_ERR(
@@ -58,6 +77,7 @@ namespace solar
 		}
 
 		isPlatformStarted = true;
+		AddEventObserver(ForwardEvent);
 
 		ImGui_ImplSDLGPU3_InitInfo info{};
 		info.ColorTargetFormat = in_gpuTexFormat;

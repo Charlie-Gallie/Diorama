@@ -17,6 +17,9 @@ add_library(solar::engine ALIAS solar_engine)
 
 target_include_directories(solar_engine PUBLIC include)
 
+# Private headers are included by their path under source/, never reaching anything that links the engine
+target_include_directories(solar_engine PRIVATE source)
+
 # Lets a dev build read assets from the source tree, so saving a model shows up in a running
 # game instead of waiting for the next build to copy it across. Shipping has no source tree
 target_compile_definitions(solar_engine PRIVATE

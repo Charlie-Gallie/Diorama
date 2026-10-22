@@ -1,9 +1,11 @@
 #pragma once
 
-#include <solar/core/Error.hpp>
+#include "solar/core/Error.hpp"
 
 #include <imgui.h>
 #include <SDL3/SDL.h>
+
+#include <string>
 
 namespace solar
 {
@@ -30,6 +32,7 @@ namespace solar
 	private:
 		ImGuiContext* context = nullptr;
 		SDL_Window* sdlWindow = nullptr;
+		std::string iniPath;
 
 		// One flag per backend rather than one for the pair. Initialize can fail between the two,
 		// and shutting down a backend that never started is not something ImGui tolerates
