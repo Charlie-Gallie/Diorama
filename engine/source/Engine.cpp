@@ -9,6 +9,7 @@
 #include "solar/render/Renderer.hpp"
 
 #include <chrono>
+#include <thread>
 
 namespace solar
 {
@@ -56,6 +57,13 @@ namespace solar
 			return 1;
 		}
 
+		// A minimised window has no surface to build a swapchain from, and claiming it for the GPU
+		// then reports success without the claim sticking
+		if (window.WaitUntilRestored() == false)
+		{
+			return 0;
+		}
+
 		Renderer renderer;
 		if (renderer.Initialize(window, in_config.debugUi) != Error::NONE)
 		{
@@ -95,6 +103,14 @@ namespace solar
 			{
 				// TODO: FixedUpdate(fixedDeltaTime)
 				accumulator -= fixedDeltaTime;
+			}
+
+			// Nothing can be drawn, so rather than spin, sleep until the next tick is due. The
+			// simulation still has to keep ticking here once a server runs in this process
+			if (window.IsMinimised())
+			{
+				std::this_thread::sleep_for(std::chrono::duration<double>(fixedDeltaTime - accumulator));
+				continue;
 			}
 
 			debugClient.Update(window, renderer, static_cast<float>(frameTime));

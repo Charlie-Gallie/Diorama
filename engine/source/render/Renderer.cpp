@@ -343,6 +343,12 @@ namespace solar
 
 		const SDL_GPUTextureFormat swapchainFormat = SDL_GetGPUSwapchainTextureFormat(gpuDevice, sdlWindow);
 
+		if (swapchainFormat == SDL_GPU_TEXTUREFORMAT_INVALID)
+		{
+			SOLAR_LOG_ERR(RENDER, "The window has no swapchain format: {}", SDL_GetError());
+			return Error::RENDERER_FAILURE;
+		}
+
 		imGuiLayer = new ImGuiLayer();
 		if (imGuiLayer->Initialize(gpuDevice, sdlWindow, swapchainFormat, presentMode) != Error::NONE)
 		{

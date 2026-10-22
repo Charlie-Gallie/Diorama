@@ -49,6 +49,29 @@ namespace solar
 		}
 	}
 
+	bool Window::IsMinimised() const
+	{
+		return (SDL_GetWindowFlags(handle) & SDL_WINDOW_MINIMIZED) != 0;
+	}
+
+	bool Window::WaitUntilRestored()
+	{
+		SDL_PumpEvents();
+
+		while (IsMinimised())
+		{
+			if (SDL_HasEvent(SDL_EVENT_QUIT))
+			{
+				return false;
+			}
+
+			SDL_Delay(16);
+			SDL_PumpEvents();
+		}
+
+		return true;
+	}
+
 Error Window::Construct(const char* in_title, int32_t in_width, int32_t in_height)
 	{
 		handle = SDL_CreateWindow(
