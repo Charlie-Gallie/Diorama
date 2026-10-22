@@ -20,7 +20,8 @@ namespace solar
 	inline EnvironmentData MakeEnvironmentData(
 		const LightSettings& in_lights,
 		const AtmosphereSettings& in_atmosphere
-	) {
+	)
+	{
 		EnvironmentData data;
 		data.light = MakeLightData(in_lights);
 		data.atmosphere = MakeAtmosphereData(in_atmosphere);

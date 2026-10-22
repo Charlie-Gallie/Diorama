@@ -34,6 +34,7 @@ namespace solar
 		// Blocks while the window is minimised. Returns false if a quit arrived while waiting,
 		// which is left queued for the event loop to see as well
 		[[nodiscard]] bool WaitUntilRestored();
+
 	private:
 		explicit Window(SDL_Window* in_handle);
 		SDL_Window* handle = nullptr;

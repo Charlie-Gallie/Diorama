@@ -40,7 +40,7 @@ namespace solar
 			// The height falls monotonically as the scale rises, so its distance from the preferred
 			// height falls and then rises. The first candidate no better than the best so far is
 			// past the turn, and a tie keeps the lower scale and the sharper image
-			for (int candidate = 2; ; ++candidate)
+			for (int candidate = 2;; ++candidate)
 			{
 				const int height = in_windowHeight / candidate;
 
@@ -150,7 +150,8 @@ namespace solar
 			const std::vector<uint8_t>& in_data,
 			const IVec3& in_size,
 			int in_offsetZ
-		) {
+		)
+		{
 			SDL_GPUTransferBufferCreateInfo transferInfo{};
 			transferInfo.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
 			transferInfo.size = static_cast<Uint32>(in_data.size());
@@ -193,7 +194,7 @@ namespace solar
 		SDL_GPUShader* LoadShader(SDL_GPUDevice* in_gpuDevice, const char* in_path, SDL_GPUShaderStage in_shaderStage, Uint32 in_numUniformBuffers, Uint32 in_numStorageTextures, Uint32 in_numSamplers)
 		{
 			filesystem::Buffer buffer;
-			
+
 			if (filesystem::ReadFile(in_path, buffer) != Error::NONE)
 			{
 				SOLAR_LOG_ERR(
@@ -302,11 +303,11 @@ namespace solar
 		// implementation we care about supports this, so a failure here means something is very
 		// wrong and is worth saying so plainly
 		if (SDL_GPUTextureSupportsFormat(
-			gpuDevice,
-			sceneFormat,
-			SDL_GPU_TEXTURETYPE_2D,
-			SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER
-		) == false)
+				gpuDevice,
+				sceneFormat,
+				SDL_GPU_TEXTURETYPE_2D,
+				SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER
+			) == false)
 		{
 			SOLAR_LOG_ERR(
 				RENDER,
@@ -329,11 +330,11 @@ namespace solar
 		SDL_GPUPresentMode presentMode = PickPresentMode(gpuDevice, sdlWindow);
 
 		if (SDL_SetGPUSwapchainParameters(
-			gpuDevice,
-			sdlWindow,
-			SDL_GPU_SWAPCHAINCOMPOSITION_SDR,
-			presentMode
-		) == false)
+				gpuDevice,
+				sdlWindow,
+				SDL_GPU_SWAPCHAINCOMPOSITION_SDR,
+				presentMode
+			) == false)
 		{
 			SOLAR_LOG_ERR(
 				RENDER,
@@ -735,7 +736,8 @@ namespace solar
 		const VoxelInstance* in_instances,
 		int in_instanceCount,
 		const Vec3& in_cameraPosition
-	) const {
+	) const
+	{
 		SceneData data;
 
 		for (int index = 0; index < loadedModelCount; ++index)
@@ -872,7 +874,8 @@ namespace solar
 		const VoxelInstance* in_instances,
 		int in_instanceCount,
 		DebugUiContext& inout_debugUi
-	) {
+	)
+	{
 		SDL_GPUCommandBuffer* commandBuffer = SDL_AcquireGPUCommandBuffer(gpuDevice);
 
 		if (commandBuffer == nullptr)
@@ -894,8 +897,8 @@ namespace solar
 				&swapchainTexture,
 				&swapchainWidth,
 				&swapchainHeight
-			) == false
-		) {
+			) == false)
+		{
 			SOLAR_LOG_ERR(
 				RENDER,
 				"Failed to acquire swapchain texture: {}", SDL_GetError()
@@ -976,8 +979,10 @@ namespace solar
 			const SceneData sceneData = MakeSceneData(in_instances, in_instanceCount, in_camera.position);
 
 			SDL_PushGPUFragmentUniformData(commandBuffer, 0, &cameraData, sizeof(cameraData));
-			SDL_PushGPUFragmentUniformData(commandBuffer, 1, voxelPalette.colours.data(),
-				static_cast<Uint32>(voxelPalette.colours.size() * sizeof(Vec4)));
+			SDL_PushGPUFragmentUniformData(
+				commandBuffer, 1, voxelPalette.colours.data(),
+				static_cast<Uint32>(voxelPalette.colours.size() * sizeof(Vec4))
+			);
 			SDL_PushGPUFragmentUniformData(commandBuffer, 2, &environmentData, sizeof(environmentData));
 			SDL_PushGPUFragmentUniformData(commandBuffer, 3, &sceneData, sizeof(sceneData));
 

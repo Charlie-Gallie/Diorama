@@ -40,7 +40,8 @@ namespace solar
 		SDL_Window* in_sdlWindow,
 		SDL_GPUTextureFormat in_gpuTexFormat,
 		SDL_GPUPresentMode in_presentMode
-	) {
+	)
+	{
 		sdlWindow = in_sdlWindow;
 
 		IMGUI_CHECKVERSION();

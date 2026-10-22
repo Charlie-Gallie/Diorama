@@ -1,0 +1,53 @@
+---
+Language: Cpp
+BasedOnStyle: Microsoft
+Standard: c++20
+
+UseTab: ForContinuationAndIndentation
+TabWidth: 4
+IndentWidth: 4
+ContinuationIndentWidth: 4
+
+# No limit, so line breaks stay where they were written and comments are never rewrapped
+ColumnLimit: 0
+ReflowComments: false
+
+BreakBeforeBraces: Allman
+NamespaceIndentation: All
+FixNamespaceComments: false
+IndentPPDirectives: BeforeHash
+AlignEscapedNewlines: DontAlign
+AccessModifierOffset: -4
+
+# Arguments either all stay on the opening line or start on the next one, with the closing
+# bracket back at the statement's indent
+AlignAfterOpenBracket: BlockIndent
+AlignOperands: DontAlign
+
+AllowShortFunctionsOnASingleLine: Inline
+AllowShortBlocksOnASingleLine: Always
+AllowShortIfStatementsOnASingleLine: WithoutElse
+AllowShortLoopsOnASingleLine: false
+AllowShortLambdasOnASingleLine: None
+LambdaBodyIndentation: OuterScope
+AllowShortCaseLabelsOnASingleLine: true
+AlignConsecutiveShortCaseStatements:
+  Enabled: true
+
+PointerAlignment: Left
+SpaceBeforeParens: ControlStatements
+
+# A multi-line braced list keeps one item per line only if it ends in a trailing comma
+Cpp11BracedListStyle: false
+
+AlignTrailingComments: false
+AlignConsecutiveAssignments: false
+AlignConsecutiveDeclarations: false
+BreakConstructorInitializers: AfterColon
+PackConstructorInitializers: Never
+MaxEmptyLinesToKeep: 1
+KeepEmptyLinesAtTheStartOfBlocks: false
+InsertNewlineAtEOF: true
+
+# Kept by hand: own header first, then third-party, then the standard library
+SortIncludes: Never

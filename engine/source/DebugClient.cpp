@@ -102,14 +102,14 @@ namespace solar
 				"assets/models/test/density_40.vox",
 				"assets/models/test/density_30.vox",
 				"assets/models/test/density_20.vox",
-				"assets/models/test/density_10.vox"
+				"assets/models/test/density_10.vox",
 			},
 			{
 				"assets/models/test/car_40.vox",
 				"assets/models/test/car_30.vox",
 				"assets/models/test/car_20.vox",
-				"assets/models/test/car_10.vox"
-			}
+				"assets/models/test/car_10.vox",
+			},
 		};
 
 		// Presets are described by the vertical extent they frame, because that is what is actually
@@ -122,7 +122,8 @@ namespace solar
 			float in_pitchDegrees,
 			float in_viewMetres,
 			float in_fovYDegrees
-		) {
+		)
+		{
 			const float distance = OrbitDistanceForExtent(in_viewMetres, glm::radians(in_fovYDegrees));
 
 			return MakeOrbitCamera(in_target, in_yawDegrees, in_pitchDegrees, distance, in_fovYDegrees);
@@ -143,6 +144,7 @@ namespace solar
 		// cos so they cannot be a constant expression
 		const CameraPreset* CameraPresets()
 		{
+			// clang-format off
 			static const CameraPreset presets[cameraPresetCount] = {
 				{ "Gameplay",      "12 m of height in view, 30 deg",   MakeViewPreset(sceneTarget, 45.0f, -35.0f, 12.0f, 30.0f) },
 				{ "Gameplay wide", "24 m of height in view, 30 deg",   MakeViewPreset(sceneTarget, 45.0f, -35.0f, 24.0f, 30.0f) },
@@ -151,6 +153,7 @@ namespace solar
 				{ "Eye level",     "3 m, stood on the ground",        MakeViewPreset(sceneTarget, 24.0f,  -4.0f,  3.0f, 32.0f) },
 				{ "Front",         "5 m, flat on for silhouettes",    MakeViewPreset(sceneTarget,  0.0f,  -8.0f,  5.0f, 25.0f) }
 			};
+			// clang-format on
 
 			return presets;
 		}
@@ -244,7 +247,6 @@ namespace solar
 			return uploadError;
 		}
 
-
 		// Ground first, then everything standing on it. Positions are hand placed against the
 		// patch rather than derived, because the patch is a fixed mock-up and not a real scene
 		int next = 0;
@@ -277,7 +279,7 @@ namespace solar
 				place({
 					.position = { gx * tileSize, tileBase, gz * tileSize },
 					.yaw = glm::radians(90.0f * (scatter % 4)),
-					.model = 4 + tile
+					.model = 4 + tile,
 				});
 			}
 		}
@@ -289,7 +291,7 @@ namespace solar
 		place({
 			.position = { -2.2f, 0.0f, -0.9f },
 			.yaw = glm::radians(20.0f),
-			.model = 1
+			.model = 1,
 		});
 
 		place({ .position = { 2.2f, 0.0f, -1.0f }, .model = 2 });
@@ -299,7 +301,7 @@ namespace solar
 			.position = { 2.6f, 0.0f, -2.0f },
 			.yaw = glm::radians(25.0f),
 			.scale = mengerSmallScale,
-			.model = 2
+			.model = 2,
 		});
 
 		instanceCount = next;
@@ -368,8 +370,7 @@ namespace solar
 		// A look already underway continues regardless of what the UI thinks, because relative
 		// mouse mode hides the cursor and ImGui's idea of where it is stops being meaningful.
 		// Only starting one yields, which is what stops a right-drag on a panel grabbing the view
-		const bool wantsLook = input::IsMouseButtonDown(input::MouseButton::RIGHT)
-			&& (isLooking || input::IsUiCapturingMouse() == false);
+		const bool wantsLook = input::IsMouseButtonDown(input::MouseButton::RIGHT) && (isLooking || input::IsUiCapturingMouse() == false);
 
 		if (wantsLook != isLooking)
 		{
@@ -484,8 +485,11 @@ namespace solar
 			appliedModelIndex = modelIndex;
 			appliedDensityIndex = densityIndex;
 
-			SOLAR_LOG_INFO(RENDER, "{} at {} voxels per metre",
-				modelNames[modelIndex], densityNames[modelIndex][densityIndex]);
+			SOLAR_LOG_INFO(
+				RENDER,
+				"{} at {} voxels per metre",
+				modelNames[modelIndex], densityNames[modelIndex][densityIndex]
+			);
 		}
 		else
 		{

@@ -1,7 +1,7 @@
 #include "solar/Engine.hpp"
 
 #if SOLAR_DEBUG_TOOLS_ENABLED
-#include "solar/devtools/DevTools.hpp"
+	#include "solar/devtools/DevTools.hpp"
 #endif
 
 int main()

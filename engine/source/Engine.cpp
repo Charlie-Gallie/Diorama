@@ -48,11 +48,11 @@ namespace solar
 
 		Window window;
 		if (window.Construct(
-			in_config.windowTitle,
-			in_config.windowWidth,
-			in_config.windowHeight
-		) != Error::NONE
-		) {
+				in_config.windowTitle,
+				in_config.windowWidth,
+				in_config.windowHeight
+			) != Error::NONE)
+		{
 			SOLAR_LOG_FATAL(PLATFORM, "Failed to initialize window");
 			return 1;
 		}

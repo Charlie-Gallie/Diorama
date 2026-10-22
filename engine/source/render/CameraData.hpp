@@ -25,7 +25,8 @@ namespace solar
 		float in_aspect,
 		int in_targetHeight,
 		const ShadingSettings& in_shading
-	) {
+	)
+	{
 		const CameraBasis basis = GetCameraBasis(in_camera);
 
 		// Field of view is an angle, but the ray needs a distance off-axis at one unit ahead

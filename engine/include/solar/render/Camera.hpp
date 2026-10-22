@@ -31,8 +31,7 @@ namespace solar
 
 		CameraBasis basis;
 
-		basis.forward =
-		{
+		basis.forward = {
 			sinYaw * cosPitch,
 			sinPitch,
 			-cosYaw * cosPitch
@@ -62,7 +61,8 @@ namespace solar
 		float in_pitchDegrees,
 		float in_distance,
 		float in_fovYDegrees
-	) {
+	)
+	{
 		Camera camera;
 		camera.yaw = glm::radians(in_yawDegrees);
 		camera.pitch = glm::radians(in_pitchDegrees);

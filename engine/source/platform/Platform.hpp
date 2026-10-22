@@ -16,7 +16,6 @@ namespace solar
 			GAMEPAD = 1 << 2
 		};
 
-
 		Platform() = default;
 		~Platform();
 

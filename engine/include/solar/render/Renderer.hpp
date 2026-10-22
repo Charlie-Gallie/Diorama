@@ -57,6 +57,7 @@ namespace solar
 		// renderer never loads files, it just gets handed data that something else worked out
 		// how to fetch
 		[[nodiscard]] Error SetVoxelModels(const VoxelModel* in_models, int in_count);
+
 	private:
 		SDL_Window* sdlWindow = nullptr;
 		SDL_GPUDevice* gpuDevice = nullptr;

@@ -5,11 +5,13 @@
 
 // Source location is compiled out in Shipping: __FILE__ embeds the build
 // machine's absolute path, which should not reach a released binary.
+// clang-format off
 #if SOLAR_LOG_LOCATION_ENABLED
 	#define SOLAR_LOG_LOCATION solar::log::Location{ __FILE__, __LINE__ }
 #else
 	#define SOLAR_LOG_LOCATION solar::log::Location{}
 #endif
+// clang-format on
 
 // Trace expands to nothing in Shipping, so its arguments are never evaluated.
 // A function could only discard the result after doing the formatting work.
@@ -73,7 +75,8 @@ namespace solar::log
 		const Location& in_location,
 		std::format_string<Args...> in_format,
 		Args&&... in_args
-	) {
+	)
+	{
 		Write(in_category, in_level, in_location, std::format(in_format, std::forward<Args>(in_args)...));
 	}
 }

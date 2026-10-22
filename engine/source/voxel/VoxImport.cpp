@@ -96,8 +96,7 @@ namespace solar::voxel
 
 			std::memcpy(out_header.id, id, 4);
 
-			return inout_reader.ReadU32(out_header.contentSize)
-				&& inout_reader.ReadU32(out_header.childrenSize);
+			return inout_reader.ReadU32(out_header.contentSize) && inout_reader.ReadU32(out_header.childrenSize);
 		}
 
 		bool IsChunk(const ChunkHeader& in_header, const char* in_id)
@@ -202,9 +201,7 @@ namespace solar::voxel
 			// rather than quietly replacing what has already been built
 			if (IsChunk(chunk, "SIZE") && haveSize == false)
 			{
-				if (body.ReadI32(size.x) == false
-					|| body.ReadI32(size.y) == false
-					|| body.ReadI32(size.z) == false)
+				if (body.ReadI32(size.x) == false || body.ReadI32(size.y) == false || body.ReadI32(size.z) == false)
 				{
 					SOLAR_LOG_ERR(CORE, "Truncated SIZE chunk");
 					return Error::INVALID_DATA;
@@ -257,7 +254,8 @@ namespace solar::voxel
 				// y is flipped to keep it a rotation.
 				out_grid.size = { size.x, size.z, size.y };
 				out_grid.materials.assign(
-					static_cast<size_t>(size.x) * size.y * size.z, 0);
+					static_cast<size_t>(size.x) * size.y * size.z, 0
+				);
 
 				for (uint32_t index = 0; index < voxelCount; ++index)
 				{
@@ -316,8 +314,11 @@ namespace solar::voxel
 			return Error::INVALID_DATA;
 		}
 
-		SOLAR_LOG_INFO(CORE, "Loaded .vox model {}x{}x{} (version {})",
-			out_grid.size.x, out_grid.size.y, out_grid.size.z, version);
+		SOLAR_LOG_INFO(
+			CORE,
+			"Loaded .vox model {}x{}x{} (version {})",
+			out_grid.size.x, out_grid.size.y, out_grid.size.z, version
+		);
 
 		return Error::NONE;
 	}

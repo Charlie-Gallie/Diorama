@@ -101,6 +101,7 @@ namespace solar::devtools
 
 				// A marker beside whichever one is actually loaded, so the row that describes what is
 				// on screen is not lost among the others
+				// clang-format off
 				ImGui::Text("%s %2d vox/m   %5.2f  %s",
 					density == static_cast<int>(in_context.density) ? ">" : " ",
 					density,
@@ -108,6 +109,7 @@ namespace solar::devtools
 					voxelsPerPixel > 1.05f ? "(finer than the screen)"
 						: voxelsPerPixel < 0.95f ? "(visible blocks)"
 						: "(1:1)");
+				// clang-format on
 			}
 		}
 
@@ -254,6 +256,7 @@ namespace solar::devtools
 
 			char text[1024];
 
+			// clang-format off
 			std::snprintf(text, sizeof(text),
 				"position   %.2f, %.2f, %.2f  metres\n"
 				"yaw %.1f deg   pitch %.1f deg   fovY %.1f deg\n"
@@ -276,6 +279,7 @@ namespace solar::devtools
 				lights.occlusionFloor, lights.exposure,
 				glm::degrees(in_camera.yaw), glm::degrees(in_camera.pitch),
 				glm::length(in_camera.position), glm::degrees(in_camera.fovY));
+			// clang-format on
 
 			ImGui::TextUnformatted(text);
 

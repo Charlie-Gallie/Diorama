@@ -42,5 +42,5 @@ namespace solar
 		float density = 0.0f;
 	};
 
-	using DebugUiCallback = void(*)(DebugUiContext& inout_context);
+	using DebugUiCallback = void (*)(DebugUiContext& inout_context);
 }

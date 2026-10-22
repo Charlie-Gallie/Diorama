@@ -41,7 +41,7 @@ namespace solar
 		}
 	}
 
-		void Window::SetRelativeMouseMode(bool in_enabled)
+	void Window::SetRelativeMouseMode(bool in_enabled)
 	{
 		if (SDL_SetWindowRelativeMouseMode(handle, in_enabled) == false)
 		{
@@ -72,7 +72,7 @@ namespace solar
 		return true;
 	}
 
-Error Window::Construct(const char* in_title, int32_t in_width, int32_t in_height)
+	Error Window::Construct(const char* in_title, int32_t in_width, int32_t in_height)
 	{
 		handle = SDL_CreateWindow(
 			in_title,
