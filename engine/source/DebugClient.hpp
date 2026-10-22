@@ -50,7 +50,11 @@ namespace solar
 
 		// A field of ground tiles with the detailed patch in the middle, then whichever test model
 		// the panel has selected, a figure for human scale and two Menger sponges to shade against
-		VoxelInstance instances[maxSceneInstances];
+		// The hard-coded scene's own limits. The renderer has none of its own
+		static constexpr int maxInstances = 32;
+		static constexpr int maxModels = 8;
+
+		VoxelInstance instances[maxInstances];
 		int instanceCount = 0;
 
 		// Every file the current scene was built from, so saving one in MagicaVoxel reloads it
@@ -61,7 +65,7 @@ namespace solar
 			int64_t lastSeenTime = 0;
 		};
 
-		WatchedModel watched[maxSceneModels];
+		WatchedModel watched[maxModels];
 		int watchedCount = 0;
 		float sinceLastPoll = 0.0f;
 

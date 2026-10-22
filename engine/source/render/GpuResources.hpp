@@ -1,8 +1,12 @@
 #pragma once
 
 #include "ImGuiLayer.hpp"
+#include "SceneShared.hlsli"
+#include "solar/core/Math.hpp"
 
 #include <SDL3/SDL.h>
+
+#include <vector>
 
 namespace solar
 {
@@ -25,6 +29,10 @@ namespace solar
 	inline void ReleaseGpuObject(SDL_GPUDevice* in_device, SDL_GPUTransferBuffer* in_buffer)
 	{
 		SDL_ReleaseGPUTransferBuffer(in_device, in_buffer);
+	}
+	inline void ReleaseGpuObject(SDL_GPUDevice* in_device, SDL_GPUBuffer* in_buffer)
+	{
+		SDL_ReleaseGPUBuffer(in_device, in_buffer);
 	}
 
 	// Owns one SDL_GPU object and releases it through the device that made it, so no path out of
@@ -162,6 +170,28 @@ namespace solar
 		SDL_Window* claimedWindow = nullptr;
 	};
 
+	// Where one model sits inside the shared atlas, and how big its voxels are. The only place world
+	// scale lives on this side
+	struct LoadedModel
+	{
+		IVec3 atlasOffset = { 0, 0, 0 };
+		IVec3 size = { 0, 0, 0 };
+		float voxelSize = 0.0f;
+
+		IVec3 coarseOffset = { 0, 0, 0 };
+		IVec3 coarseSize = { 0, 0, 0 };
+	};
+
+	// An instance as the shader wants it, plus how near it is to the camera for the sort
+	struct SortedInstance
+	{
+		shader::InstanceData data;
+
+		// To the nearest point on the bounding sphere, so a large instance whose centre is far away
+		// still sorts by the part of it the camera can actually reach first
+		float distance = 0.0f;
+	};
+
 	// Everything the renderer holds on the GPU. Members are destroyed in reverse order, so the
 	// device is declared first to outlive everything made from it, and ImGui last so it shuts
 	// down while the device it draws with still exists
@@ -181,6 +211,20 @@ namespace solar
 		// texture is the same thing one cell per block of voxels, for skipping empty space
 		GpuHandle<SDL_GPUTexture> voxelTexture;
 		GpuHandle<SDL_GPUTexture> coarseTexture;
+
+		// Describes the atlas, so it is rebuilt with it and a reload swaps both together
+		GpuHandle<SDL_GPUBuffer> modelBuffer;
+		std::vector<LoadedModel> loadedModels;
+
+		// Refilled every frame. Grown when a frame has more instances than fit and never shrunk.
+		// The transfer buffer is cycled as it is mapped, so a frame still in flight keeps the copy
+		// it was given
+		GpuHandle<SDL_GPUBuffer> instanceBuffer;
+		GpuHandle<SDL_GPUTransferBuffer> instanceTransfer;
+		int instanceCapacity = 0;
+
+		// Kept between frames so that sorting the instances does not allocate every frame
+		std::vector<SortedInstance> sortedInstances;
 
 		ImGuiLayer imGuiLayer;
 	};

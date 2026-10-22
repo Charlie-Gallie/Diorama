@@ -10,11 +10,6 @@ namespace solar::voxel
 
 namespace solar
 {
-	// Shader array bounds, so raising either means recompiling the scene shader. They are
-	// public because the client has to stay inside them when it builds a scene
-	inline constexpr int maxSceneModels = 8;
-	inline constexpr int maxSceneInstances = 32;
-
 	// A model handed to the renderer for upload. The grid says how many voxels there are and this
 	// says how big one is, which is the only place world scale enters - the renderer never guesses
 	// a size, and two models in the same scene may be authored at different densities

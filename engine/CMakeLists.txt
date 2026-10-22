@@ -18,7 +18,8 @@ add_library(solar::engine ALIAS solar_engine)
 target_include_directories(solar_engine PUBLIC include)
 
 # Private headers are included by their path under source/, never reaching anything that links the engine
-target_include_directories(solar_engine PRIVATE source)
+# shaders/ is there for the .hlsli files the renderer shares with the shaders
+target_include_directories(solar_engine PRIVATE source shaders)
 
 # Lets a dev build read assets from the source tree, so saving a model shows up in a running
 # game instead of waiting for the next build to copy it across. Shipping has no source tree
@@ -51,6 +52,12 @@ find_program(DXC_EXECUTABLE dxc
 # a path relative to the binary rather than the working directory.
 set(SOLAR_SHADER_OUTPUT_DIR "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/$<CONFIG>/shaders")
 
+# Every shader rebuilds when any of these changes. dxc does report what it included, but this is
+# simpler than wiring that up and there are only a few
+set(SOLAR_SHADER_INCLUDES
+	"${CMAKE_CURRENT_SOURCE_DIR}/shaders/SceneShared.hlsli"
+)
+
 # in_source: path relative to this directory. in_profile: dxc target profile.
 function(solar_compile_shader in_source in_profile out_compiled)
 	cmake_path(GET in_source STEM LAST_ONLY stem)  # "Fullscreen.vert.hlsl" -> "Fullscreen.vert"
@@ -67,7 +74,7 @@ function(solar_compile_shader in_source in_profile out_compiled)
 			$<$<NOT:$<CONFIG:Shipping>>:-Zi>
 			-Fo "${compiled}"
 			"${CMAKE_CURRENT_SOURCE_DIR}/${in_source}"
-		DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/${in_source}"
+		DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/${in_source}" ${SOLAR_SHADER_INCLUDES}
 		COMMENT "Compiling shader ${in_source}"
 		VERBATIM
 		COMMAND_EXPAND_LISTS
@@ -96,10 +103,12 @@ target_sources(solar_engine PRIVATE
 	"shaders/Fullscreen.vert.hlsl"
 	"shaders/Fullscreen.frag.hlsl"
 	"shaders/Present.frag.hlsl"
+	"shaders/SceneShared.hlsli"
 )
 set_source_files_properties(
 	"shaders/Fullscreen.vert.hlsl"
 	"shaders/Fullscreen.frag.hlsl"
 	"shaders/Present.frag.hlsl"
+	"shaders/SceneShared.hlsli"
 	PROPERTIES HEADER_FILE_ONLY TRUE
 )

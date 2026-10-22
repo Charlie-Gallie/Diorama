@@ -3,7 +3,7 @@
 #include "CameraData.hpp"
 #include "EnvironmentData.hpp"
 #include "GpuResources.hpp"
-#include "SceneData.hpp"
+#include "SceneShared.hlsli"
 #include "solar/core/Assert.hpp"
 #include "solar/core/Log.hpp"
 #include "solar/platform/Window.hpp"
@@ -71,10 +71,15 @@ namespace solar
 		// happen in the present pass instead.
 		constexpr SDL_GPUTextureFormat sceneFormat = SDL_GPU_TEXTUREFORMAT_R16G16B16A16_FLOAT;
 
-		// Voxels per coarse cell. Bigger skips further per step but overshoots more into cells that
-		// only just hold something; 8 is a reasonable middle and is the one number the shader and
-		// this file have to agree on, so it travels as a uniform rather than being written twice
-		constexpr int coarseCell = 16;
+		using shader::coarseCell;
+
+		static_assert(
+			sizeof(shader::ModelData) == 48 && sizeof(shader::InstanceData) == 48,
+			"Vec4 must be four packed floats, as float4 is in HLSL"
+		);
+
+		// Instances the buffer starts with, before any frame has asked for more
+		constexpr int initialInstanceCapacity = 64;
 
 		// Validation layers are expensive, so they are off in Shipping. NDEBUG is a
 		// stand-in until the SE_ feature flags exist: Debug and Development strip it,
@@ -143,20 +148,13 @@ namespace solar
 			return SDL_CreateGPUTexture(in_gpuDevice, &info);
 		}
 
-		// Returns the transfer buffer rather than releasing it, because SDL only keeps it alive
-		// until the copy completes and the caller owns the command buffer that will do it
-		GpuHandle<SDL_GPUTransferBuffer> UploadVoxels(
-			SDL_GPUDevice* in_gpuDevice,
-			SDL_GPUCopyPass* in_copyPass,
-			SDL_GPUTexture* in_texture,
-			const std::vector<uint8_t>& in_data,
-			const IVec3& in_size,
-			int in_offsetZ
-		)
+		// Copies bytes into a new transfer buffer ready for a copy pass to send on. Returned rather
+		// than released, because the caller owns the command buffer that will do the copy
+		GpuHandle<SDL_GPUTransferBuffer> StageBytes(SDL_GPUDevice* in_gpuDevice, const void* in_data, size_t in_bytes)
 		{
 			SDL_GPUTransferBufferCreateInfo transferInfo{};
 			transferInfo.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
-			transferInfo.size = static_cast<Uint32>(in_data.size());
+			transferInfo.size = static_cast<Uint32>(in_bytes);
 
 			GpuHandle<SDL_GPUTransferBuffer> transferBuffer(
 				in_gpuDevice, SDL_CreateGPUTransferBuffer(in_gpuDevice, &transferInfo)
@@ -176,8 +174,27 @@ namespace solar
 				return {};
 			}
 
-			SDL_memcpy(mapped, in_data.data(), in_data.size());
+			SDL_memcpy(mapped, in_data, in_bytes);
 			SDL_UnmapGPUTransferBuffer(in_gpuDevice, transferBuffer.Get());
+
+			return transferBuffer;
+		}
+
+		GpuHandle<SDL_GPUTransferBuffer> UploadVoxels(
+			SDL_GPUDevice* in_gpuDevice,
+			SDL_GPUCopyPass* in_copyPass,
+			SDL_GPUTexture* in_texture,
+			const std::vector<uint8_t>& in_data,
+			const IVec3& in_size,
+			int in_offsetZ
+		)
+		{
+			GpuHandle<SDL_GPUTransferBuffer> transferBuffer = StageBytes(in_gpuDevice, in_data.data(), in_data.size());
+
+			if (transferBuffer.Get() == nullptr)
+			{
+				return {};
+			}
 
 			SDL_GPUTextureTransferInfo source{};
 			source.transfer_buffer = transferBuffer.Get();
@@ -194,7 +211,193 @@ namespace solar
 			return transferBuffer;
 		}
 
-		GpuHandle<SDL_GPUShader> LoadShader(SDL_GPUDevice* in_gpuDevice, const char* in_path, SDL_GPUShaderStage in_shaderStage, Uint32 in_numUniformBuffers, Uint32 in_numStorageTextures, Uint32 in_numSamplers)
+		GpuHandle<SDL_GPUTransferBuffer> UploadBuffer(
+			SDL_GPUDevice* in_gpuDevice,
+			SDL_GPUCopyPass* in_copyPass,
+			SDL_GPUBuffer* in_buffer,
+			const void* in_data,
+			size_t in_bytes
+		)
+		{
+			GpuHandle<SDL_GPUTransferBuffer> transferBuffer = StageBytes(in_gpuDevice, in_data, in_bytes);
+
+			if (transferBuffer.Get() == nullptr)
+			{
+				return {};
+			}
+
+			SDL_GPUTransferBufferLocation source{};
+			source.transfer_buffer = transferBuffer.Get();
+
+			SDL_GPUBufferRegion destination{};
+			destination.buffer = in_buffer;
+			destination.size = static_cast<Uint32>(in_bytes);
+
+			SDL_UploadToGPUBuffer(in_copyPass, &source, &destination, false);
+
+			return transferBuffer;
+		}
+
+		GpuHandle<SDL_GPUBuffer> CreateStorageBuffer(SDL_GPUDevice* in_gpuDevice, size_t in_bytes)
+		{
+			SDL_GPUBufferCreateInfo info{};
+			info.usage = SDL_GPU_BUFFERUSAGE_GRAPHICS_STORAGE_READ;
+			info.size = static_cast<Uint32>(in_bytes);
+
+			return GpuHandle<SDL_GPUBuffer>(in_gpuDevice, SDL_CreateGPUBuffer(in_gpuDevice, &info));
+		}
+
+		// Doubles rather than fitting exactly, so a scene that keeps growing does not recreate the
+		// buffer every frame
+		bool EnsureInstanceCapacity(GpuResources& inout_gpu, int in_count)
+		{
+			if (in_count <= inout_gpu.instanceCapacity)
+			{
+				return true;
+			}
+
+			const int capacity = SDL_max(in_count, SDL_max(inout_gpu.instanceCapacity * 2, initialInstanceCapacity));
+			const size_t bytes = static_cast<size_t>(capacity) * sizeof(shader::InstanceData);
+
+			SDL_GPUDevice* const gpuDevice = inout_gpu.device.Get();
+
+			SDL_GPUTransferBufferCreateInfo transferInfo{};
+			transferInfo.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
+			transferInfo.size = static_cast<Uint32>(bytes);
+
+			GpuHandle<SDL_GPUBuffer> buffer = CreateStorageBuffer(gpuDevice, bytes);
+			GpuHandle<SDL_GPUTransferBuffer> transfer(gpuDevice, SDL_CreateGPUTransferBuffer(gpuDevice, &transferInfo));
+
+			if (buffer.Get() == nullptr || transfer.Get() == nullptr)
+			{
+				SOLAR_LOG_ERR(RENDER, "Failed to make room for {} instances: {}", capacity, SDL_GetError());
+				return false;
+			}
+
+			inout_gpu.instanceBuffer = std::move(buffer);
+			inout_gpu.instanceTransfer = std::move(transfer);
+			inout_gpu.instanceCapacity = capacity;
+
+			return true;
+		}
+
+		// Each instance reduced to what the shader needs and sorted nearest first. Returns how many
+		// there are, which is all of them now that nothing caps the count
+		int BuildInstances(
+			GpuResources& inout_gpu,
+			const VoxelInstance* in_instances,
+			int in_instanceCount,
+			const Vec3& in_cameraPosition
+		)
+		{
+			const std::vector<LoadedModel>& models = inout_gpu.loadedModels;
+			std::vector<SortedInstance>& sorted = inout_gpu.sortedInstances;
+
+			sorted.clear();
+
+			if (in_instances == nullptr || models.empty())
+			{
+				return 0;
+			}
+
+			const int lastModel = static_cast<int>(models.size()) - 1;
+
+			for (int index = 0; index < in_instanceCount; ++index)
+			{
+				const VoxelInstance& instance = in_instances[index];
+
+				// Clamped rather than rejected, so a bad index draws the first model instead of
+				// reading past the end of the buffer in the shader
+				const int model = glm::clamp(instance.model, 0, lastModel);
+
+				// Floored rather than trusted, since a zero would collapse the model to nothing and
+				// then be divided by. The sphere has to agree with it, so it is taken once
+				const float scale = glm::max(instance.scale, 0.0001f);
+
+				// The box is centred on x and z and rises from the base, so its middle sits directly
+				// above the position - and a yaw turns that point onto itself, so the centre needs no
+				// rotation. Nor does the radius, which is half the box diagonal either way
+				const Vec3 extent = Vec3(models[model].size) * (models[model].voxelSize * scale);
+
+				const Vec3 sphereCentre = instance.position + Vec3(0.0f, extent.y * 0.5f, 0.0f);
+				const float sphereRadius = 0.5f * glm::length(extent);
+
+				SortedInstance entry;
+				entry.data.transform = Vec4(instance.position, static_cast<float>(model));
+
+				// Taken once here rather than per pixel, which is the only reason the yaw is not
+				// simply handed over as an angle
+				entry.data.rotation = Vec4(glm::sin(instance.yaw), glm::cos(instance.yaw), scale, 0.0f);
+
+				entry.data.sphere = Vec4(sphereCentre, sphereRadius);
+				entry.distance = glm::length(sphereCentre - in_cameraPosition) - sphereRadius;
+
+				sorted.push_back(entry);
+			}
+
+			// Nearest first, so a camera ray finds its closest hit early and every instance behind it
+			// is then turned away by comparison instead of being traversed. The sphere test cannot do
+			// that on its own, because until something has been hit there is no distance to beat.
+			// Shadow rays travel a different way and gain nothing from this order, but lose nothing
+			// to it either
+			std::sort(sorted.begin(), sorted.end(), [](const SortedInstance& in_a, const SortedInstance& in_b)
+			{
+				return in_a.distance < in_b.distance;
+			});
+
+			return static_cast<int>(sorted.size());
+		}
+
+		// Through a copy pass, so this has to happen outside any render pass
+		[[nodiscard]] bool UploadInstances(GpuResources& inout_gpu, SDL_GPUCommandBuffer* in_commandBuffer, int in_count)
+		{
+			if (in_count == 0)
+			{
+				return true;
+			}
+
+			if (EnsureInstanceCapacity(inout_gpu, in_count) == false)
+			{
+				return false;
+			}
+
+			SDL_GPUDevice* const gpuDevice = inout_gpu.device.Get();
+			const size_t bytes = static_cast<size_t>(in_count) * sizeof(shader::InstanceData);
+
+			shader::InstanceData* const mapped = static_cast<shader::InstanceData*>(
+				SDL_MapGPUTransferBuffer(gpuDevice, inout_gpu.instanceTransfer.Get(), true)
+			);
+
+			if (mapped == nullptr)
+			{
+				SOLAR_LOG_ERR(RENDER, "Failed to map the instance transfer buffer: {}", SDL_GetError());
+				return false;
+			}
+
+			for (int index = 0; index < in_count; ++index)
+			{
+				mapped[index] = inout_gpu.sortedInstances[index].data;
+			}
+
+			SDL_UnmapGPUTransferBuffer(gpuDevice, inout_gpu.instanceTransfer.Get());
+
+			SDL_GPUTransferBufferLocation source{};
+			source.transfer_buffer = inout_gpu.instanceTransfer.Get();
+
+			SDL_GPUBufferRegion destination{};
+			destination.buffer = inout_gpu.instanceBuffer.Get();
+			destination.size = static_cast<Uint32>(bytes);
+
+			// Cycled because the whole region is overwritten, so a frame still reading the old
+			// contents is given a buffer of its own rather than being waited on
+			SDL_GPUCopyPass* copyPass = SDL_BeginGPUCopyPass(in_commandBuffer);
+			SDL_UploadToGPUBuffer(copyPass, &source, &destination, true);
+			SDL_EndGPUCopyPass(copyPass);
+
+			return true;
+		}
+
+		GpuHandle<SDL_GPUShader> LoadShader(SDL_GPUDevice* in_gpuDevice, const char* in_path, SDL_GPUShaderStage in_shaderStage, Uint32 in_numUniformBuffers, Uint32 in_numStorageTextures, Uint32 in_numSamplers, Uint32 in_numStorageBuffers)
 		{
 			filesystem::Buffer buffer;
 
@@ -216,6 +419,7 @@ namespace solar
 			info.num_samplers = in_numSamplers;
 			info.num_uniform_buffers = in_numUniformBuffers;
 			info.num_storage_textures = in_numStorageTextures;
+			info.num_storage_buffers = in_numStorageBuffers;
 
 			GpuHandle<SDL_GPUShader> gpuShader(in_gpuDevice, SDL_CreateGPUShader(in_gpuDevice, &info));
 			if (gpuShader.Get() == nullptr)
@@ -316,6 +520,7 @@ namespace solar
 			SDL_GPU_SHADERSTAGE_VERTEX,
 			0,
 			0,
+			0,
 			0
 		);
 
@@ -326,14 +531,16 @@ namespace solar
 
 		// Four uniform buffers: camera, palette, environment, scene. This has to match the number
 		// of cbuffers the shader declares or the bindings silently slide along by one, and four
-		// is also as many as SDL_GPU allows per stage
+		// is also as many as SDL_GPU allows per stage. Two storage textures for the atlas and two
+		// storage buffers for the models and instances
 		const GpuHandle<SDL_GPUShader> fragShader = LoadShader(
 			gpuDevice,
 			"shaders/Fullscreen.frag.spv",
 			SDL_GPU_SHADERSTAGE_FRAGMENT,
 			4,
 			2,
-			0
+			0,
+			2
 		);
 
 		if (fragShader.Get() == nullptr)
@@ -377,7 +584,8 @@ namespace solar
 			SDL_GPU_SHADERSTAGE_FRAGMENT,
 			1,
 			0,
-			1
+			1,
+			0
 		);
 
 		if (presentFragShader.Get() == nullptr)
@@ -427,6 +635,12 @@ namespace solar
 			return Error::RENDERER_FAILURE;
 		}
 
+		// Made now rather than on the first frame, so the scene pass always has a buffer to bind
+		if (EnsureInstanceCapacity(*gpu, initialInstanceCapacity) == false)
+		{
+			return Error::RENDERER_FAILURE;
+		}
+
 		SOLAR_LOG_INFO(RENDER, "Initialized renderer");
 		return Error::NONE;
 	}
@@ -437,9 +651,9 @@ namespace solar
 
 		SDL_GPUDevice* const gpuDevice = gpu->device.Get();
 
-		if (in_models == nullptr || in_count <= 0 || in_count > maxSceneModels)
+		if (in_models == nullptr || in_count <= 0)
 		{
-			SOLAR_LOG_ERR(RENDER, "A scene needs 1 to {} models, was given {}", maxSceneModels, in_count);
+			SOLAR_LOG_ERR(RENDER, "A scene needs at least one model, was given {}", in_count);
 			return Error::INVALID_DATA;
 		}
 
@@ -452,12 +666,12 @@ namespace solar
 		// One palette serves the whole scene, so each colour a model actually uses is given its own
 		// slot in it and the voxel data is remapped to match as it uploads. Counting only the used
 		// colours matters because an artist can pick them from anywhere in a model's 256
-		std::array<uint8_t, voxel::paletteSize> paletteRemaps[maxSceneModels]{};
+		std::vector<std::array<uint8_t, voxel::paletteSize>> paletteRemaps(in_count);
 		int paletteUsed = 0;
 
 		// Everything is built into locals and only swapped in once nothing else can fail, so a bad
 		// reload leaves the scene that is already running exactly as it was
-		LoadedModel layout[maxSceneModels];
+		std::vector<LoadedModel> layout(in_count);
 
 		for (int index = 0; index < in_count; ++index)
 		{
@@ -528,7 +742,21 @@ namespace solar
 		GpuHandle<SDL_GPUTexture> newVoxelTexture(gpuDevice, CreateVoxelTexture(gpuDevice, atlasSize));
 		GpuHandle<SDL_GPUTexture> newCoarseTexture(gpuDevice, CreateVoxelTexture(gpuDevice, coarseAtlasSize));
 
-		if (newVoxelTexture.Get() == nullptr || newCoarseTexture.Get() == nullptr)
+		std::vector<shader::ModelData> modelData(in_count);
+
+		for (int index = 0; index < in_count; ++index)
+		{
+			const LoadedModel& loaded = layout[index];
+
+			modelData[index].offset = Vec4(loaded.atlasOffset, loaded.voxelSize);
+			modelData[index].size = Vec4(loaded.size, 0.0f);
+			modelData[index].coarse = Vec4(loaded.coarseOffset, static_cast<float>(coarseCell));
+		}
+
+		const size_t modelBytes = modelData.size() * sizeof(shader::ModelData);
+		GpuHandle<SDL_GPUBuffer> newModelBuffer = CreateStorageBuffer(gpuDevice, modelBytes);
+
+		if (newVoxelTexture.Get() == nullptr || newCoarseTexture.Get() == nullptr || newModelBuffer.Get() == nullptr)
 		{
 			SOLAR_LOG_ERR(RENDER, "Failed to create voxel atlas: {}", SDL_GetError());
 			return Error::RENDERER_FAILURE;
@@ -546,11 +774,15 @@ namespace solar
 
 		// Released on the way out of this function, after the submit. SDL keeps each one alive until
 		// its copy completes
-		GpuHandle<SDL_GPUTransferBuffer> transferBuffers[maxSceneModels];
-		GpuHandle<SDL_GPUTransferBuffer> coarseBuffers[maxSceneModels];
+		std::vector<GpuHandle<SDL_GPUTransferBuffer>> transferBuffers(in_count);
+		std::vector<GpuHandle<SDL_GPUTransferBuffer>> coarseBuffers(in_count);
 		SDL_GPUCopyPass* copyPass = SDL_BeginGPUCopyPass(commandBuffer);
 
-		Error result = Error::NONE;
+		const GpuHandle<SDL_GPUTransferBuffer> modelTransfer = UploadBuffer(
+			gpuDevice, copyPass, newModelBuffer.Get(), modelData.data(), modelBytes
+		);
+
+		Error result = modelTransfer.Get() != nullptr ? Error::NONE : Error::RENDERER_FAILURE;
 
 		for (int index = 0; index < in_count && result == Error::NONE; ++index)
 		{
@@ -627,14 +859,9 @@ namespace solar
 		// has finished with them, so the frame already in flight keeps reading the old ones safely
 		gpu->voxelTexture = std::move(newVoxelTexture);
 		gpu->coarseTexture = std::move(newCoarseTexture);
+		gpu->modelBuffer = std::move(newModelBuffer);
+		gpu->loadedModels = std::move(layout);
 		voxelPalette = palette;
-
-		for (int index = 0; index < in_count; ++index)
-		{
-			loadedModels[index] = layout[index];
-		}
-
-		loadedModelCount = in_count;
 
 		SOLAR_LOG_INFO(
 			RENDER,
@@ -646,103 +873,6 @@ namespace solar
 		);
 
 		return Error::NONE;
-	}
-
-	SceneData Renderer::MakeSceneData(
-		const VoxelInstance* in_instances,
-		int in_instanceCount,
-		const Vec3& in_cameraPosition
-	) const
-	{
-		SceneData data;
-
-		for (int index = 0; index < loadedModelCount; ++index)
-		{
-			const LoadedModel& model = loadedModels[index];
-
-			data.modelOffset[index] = Vec4(model.atlasOffset, model.voxelSize);
-			data.modelSize[index] = Vec4(model.size, 0.0f);
-			data.modelCoarse[index] = Vec4(model.coarseOffset, static_cast<float>(coarseCell));
-		}
-
-		const int count = SDL_min(in_instanceCount, maxSceneInstances);
-
-		// Each instance reduced to what the shader needs, plus how near it is to the camera
-		struct Ordered
-		{
-			Vec3 position = { 0.0f, 0.0f, 0.0f };
-			Vec3 sphereCentre = { 0.0f, 0.0f, 0.0f };
-			float sphereRadius = 0.0f;
-			float yaw = 0.0f;
-			float scale = 1.0f;
-			int model = 0;
-
-			// To the nearest point on the sphere, so a large instance whose centre is far away
-			// still sorts by the part of it the camera can actually reach first
-			float distance = 0.0f;
-		};
-
-		Ordered ordered[maxSceneInstances];
-
-		for (int index = 0; index < count; ++index)
-		{
-			const VoxelInstance& instance = in_instances[index];
-
-			// Clamped rather than rejected, so a bad index draws the first model instead of
-			// reading past the end of the array in the shader
-			const int model = glm::clamp(instance.model, 0, SDL_max(loadedModelCount - 1, 0));
-
-			// Floored rather than trusted, since a zero would collapse the model to nothing and
-			// then be divided by. The sphere has to agree with it, so it is taken once
-			const float scale = glm::max(instance.scale, 0.0001f);
-
-			// The box is centred on x and z and rises from the base, so its middle sits directly
-			// above the position - and a yaw turns that point onto itself, so the centre needs no
-			// rotation. Nor does the radius, which is half the box diagonal either way
-			const Vec3 extent = Vec3(loadedModels[model].size) * (loadedModels[model].voxelSize * scale);
-
-			Ordered& entry = ordered[index];
-
-			entry.position = instance.position;
-			entry.sphereCentre = instance.position + Vec3(0.0f, extent.y * 0.5f, 0.0f);
-			entry.sphereRadius = 0.5f * glm::length(extent);
-			entry.yaw = instance.yaw;
-			entry.scale = scale;
-			entry.model = model;
-			entry.distance = glm::length(entry.sphereCentre - in_cameraPosition) - entry.sphereRadius;
-		}
-
-		// Nearest first, so a camera ray finds its closest hit early and every instance behind it
-		// is then turned away by comparison instead of being traversed. The sphere test cannot do
-		// that on its own, because until something has been hit there is no distance to beat.
-		// Shadow rays travel a different way and gain nothing from this order, but lose nothing
-		// to it either
-		std::sort(ordered, ordered + count, [](const Ordered& in_a, const Ordered& in_b)
-		{
-			return in_a.distance < in_b.distance;
-		});
-
-		for (int index = 0; index < count; ++index)
-		{
-			const Ordered& entry = ordered[index];
-
-			data.instanceTransform[index] = Vec4(entry.position, static_cast<float>(entry.model));
-
-			// Taken once here rather than per pixel, which is the only reason the yaw is not
-			// simply handed over as an angle
-			data.instanceRotation[index] = Vec4(
-				glm::sin(entry.yaw),
-				glm::cos(entry.yaw),
-				entry.scale,
-				0.0f
-			);
-
-			data.instanceSphere[index] = Vec4(entry.sphereCentre, entry.sphereRadius);
-		}
-
-		data.counts.x = static_cast<float>(count);
-
-		return data;
 	}
 
 	bool Renderer::EnsureSceneTexture(int in_width, int in_height)
@@ -864,6 +994,15 @@ namespace solar
 		// Uploads buffers through a copy pass, so it cannot run inside a render pass.
 		gpu->imGuiLayer.PrepareDraw(commandBuffer);
 
+		// Also a copy pass, for the same reason. A failed upload draws an empty scene rather than
+		// whatever the buffer held last
+		int instanceCount = BuildInstances(*gpu, in_instances, in_instanceCount, in_camera.position);
+
+		if (UploadInstances(*gpu, commandBuffer, instanceCount) == false)
+		{
+			instanceCount = 0;
+		}
+
 		// Pass 1: the scene, at internal resolution.
 		{
 			SDL_GPUColorTargetInfo target{};
@@ -878,7 +1017,7 @@ namespace solar
 
 			// Until a scene has uploaded there is no atlas to bind, so the target is cleared and
 			// nothing is drawn rather than handing the shader a null texture
-			const bool hasScene = gpu->voxelTexture.Get() != nullptr && gpu->coarseTexture.Get() != nullptr;
+			const bool hasScene = gpu->voxelTexture.Get() != nullptr && gpu->coarseTexture.Get() != nullptr && gpu->modelBuffer.Get() != nullptr;
 
 			if (hasScene == false)
 			{
@@ -895,7 +1034,9 @@ namespace solar
 			const CameraData cameraData = MakeCameraData(in_camera, sceneAspect, sceneHeight, shading);
 
 			const EnvironmentData environmentData = MakeEnvironmentData(lights, atmosphere);
-			const SceneData sceneData = MakeSceneData(in_instances, in_instanceCount, in_camera.position);
+
+			shader::SceneConstants sceneData;
+			sceneData.counts = Vec4(static_cast<float>(instanceCount), 0.0f, 0.0f, 0.0f);
 
 			SDL_PushGPUFragmentUniformData(commandBuffer, 0, &cameraData, sizeof(cameraData));
 			SDL_PushGPUFragmentUniformData(
@@ -911,6 +1052,9 @@ namespace solar
 				SDL_GPUTexture* const volumes[] = { gpu->voxelTexture.Get(), gpu->coarseTexture.Get() };
 
 				SDL_BindGPUFragmentStorageTextures(scenePass, 0, volumes, 2);
+
+				SDL_GPUBuffer* const buffers[] = { gpu->modelBuffer.Get(), gpu->instanceBuffer.Get() };
+				SDL_BindGPUFragmentStorageBuffers(scenePass, 0, buffers, 2);
 				SDL_DrawGPUPrimitives(scenePass, 3, 1, 0, 0);
 			}
 

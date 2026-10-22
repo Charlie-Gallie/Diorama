@@ -71,7 +71,7 @@ namespace solar
 
 		// A 5 by 5 of ground with the detailed patch taking the middle, then the four props.
 		// What the scene asks for, not what it gets - the placement is bounded by
-		// maxSceneInstances and reports if it had to drop any
+		// maxInstances and reports if it had to drop any
 		constexpr int sceneInstanceCount = 29;
 
 		constexpr int cameraPresetCount = 6;
@@ -256,7 +256,7 @@ namespace solar
 		// from a constant that has to be kept in step by hand
 		const auto place = [this, &next](const VoxelInstance& in_instance)
 		{
-			if (next < maxSceneInstances)
+			if (next < maxInstances)
 			{
 				instances[next++] = in_instance;
 			}

@@ -13,7 +13,6 @@
 
 namespace solar
 {
-	struct SceneData;
 	struct GpuResources;
 	class Window;
 	struct Camera;
@@ -62,32 +61,11 @@ namespace solar
 		AtmosphereSettings atmosphere;
 		int sceneWidth = 0;
 		int sceneHeight = 0;
-		// Where one model sits inside the shared atlas, and how big its voxels are. The only
-		// place world scale lives on this side
-		struct LoadedModel
-		{
-			IVec3 atlasOffset = { 0, 0, 0 };
-			IVec3 size = { 0, 0, 0 };
-			float voxelSize = 0.0f;
-
-			IVec3 coarseOffset = { 0, 0, 0 };
-			IVec3 coarseSize = { 0, 0, 0 };
-		};
-
-		LoadedModel loadedModels[maxSceneModels];
-		int loadedModelCount = 0;
 
 		// Laid out exactly as the shader's float4[256], so it uploads directly.
 		voxel::Palette voxelPalette;
 
 		DebugUiCallback debugUiCallback = nullptr;
-
-		// SceneData is private to the renderer, which a declaration may name without defining
-		SceneData MakeSceneData(
-			const VoxelInstance* in_instances,
-			int in_instanceCount,
-			const Vec3& in_cameraPosition
-		) const;
 
 		[[nodiscard]] bool EnsureSceneTexture(int in_width, int in_height);
 	};

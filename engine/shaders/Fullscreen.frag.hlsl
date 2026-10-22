@@ -1,3 +1,5 @@
+#include "SceneShared.hlsli"
+
 cbuffer CameraData : register(b0, space3)
 {
 	float4 positionAndScale; // xyz camera position, w tan(fovY/2)
@@ -30,17 +32,8 @@ cbuffer EnvironmentData : register(b2, space3)
 
 cbuffer SceneData : register(b3, space3)
 {
-	float4 counts; // x instance count
-	float4 modelOffset[8]; // xyz atlas offset in voxels, w voxel size in metres
-	float4 modelSize[8]; // xyz size in voxels
-	float4 modelCoarse[8]; // xyz coarse atlas offset in cells, w voxels per cell
-	// These bounds must match maxSceneInstances in VoxelModel.hpp. Nothing checks it for you -
-	// the C++ static_assert only proves the struct is self consistent
-	float4 instanceTransform[32]; // xyz position in metres, w model index
-	float4 instanceRotation[32]; // x sine of yaw, y cosine of yaw, z scale
-	float4 instanceSphere[32]; // xyz centre in metres, w radius
+	SceneConstants scene;
 };
-
 
 Texture3D<uint> voxels : register(t0, space2);
 
@@ -48,10 +41,14 @@ Texture3D<uint> voxels : register(t0, space2);
 // cross empty space a cell at a time instead of a voxel at a time
 Texture3D<uint> coarseVoxels : register(t1, space2);
 
-// A ray crosses at most three cells per axis, so these only have to be generous enough for the
-// largest model. The fine bound is per coarse cell, not per ray
+// SDL_GPU puts a fragment shader's storage buffers after its storage textures in the same set, so
+// these follow the two volumes. Sized by the renderer, so nothing here bounds how many there are
+StructuredBuffer<ModelData> modelData : register(t2, space2);
+StructuredBuffer<InstanceData> instanceData : register(t3, space2);
+
+// Only has to be generous enough for the largest model. The fine bound, maxFineSteps, is per coarse
+// cell rather than per ray and lives with the cell size it depends on
 static const int maxCoarseSteps = 256;
-static const int maxFineSteps = 64;
 
 struct PSInput
 {
@@ -115,11 +112,13 @@ struct Model
 Model GetModel(int in_index)
 {
 	Model model;
-	model.offset = (int3)modelOffset[in_index].xyz;
-	model.size = (int3)modelSize[in_index].xyz;
-	model.voxelSize = modelOffset[in_index].w;
-	model.coarseOffset = (int3)modelCoarse[in_index].xyz;
-	model.coarseCell = modelCoarse[in_index].w;
+	const ModelData data = modelData[in_index];
+
+	model.offset = (int3)data.offset.xyz;
+	model.size = (int3)data.size.xyz;
+	model.voxelSize = data.offset.w;
+	model.coarseOffset = (int3)data.coarse.xyz;
+	model.coarseCell = data.coarse.w;
 
 	// Derived rather than passed, so there is one less number to keep in step with the renderer
 	const int cell = (int)model.coarseCell;
@@ -140,11 +139,13 @@ struct Instance
 Instance GetInstance(int in_index)
 {
 	Instance instance;
-	instance.position = instanceTransform[in_index].xyz;
-	instance.model = (int)instanceTransform[in_index].w;
-	instance.sinYaw = instanceRotation[in_index].x;
-	instance.cosYaw = instanceRotation[in_index].y;
-	instance.scale = instanceRotation[in_index].z;
+	const InstanceData data = instanceData[in_index];
+
+	instance.position = data.transform.xyz;
+	instance.model = (int)data.transform.w;
+	instance.sinYaw = data.rotation.x;
+	instance.cosYaw = data.rotation.y;
+	instance.scale = data.rotation.z;
 
 	return instance;
 }
@@ -522,8 +523,9 @@ struct SceneHit
 // and the key direction is normalised on the CPU
 bool MissesInstanceSphere(int in_index, float3 in_origin, float3 in_direction, float in_bestT)
 {
-	const float3 toCentre = instanceSphere[in_index].xyz - in_origin;
-	const float radius = instanceSphere[in_index].w;
+	const float4 sphere = instanceData[in_index].sphere;
+	const float3 toCentre = sphere.xyz - in_origin;
+	const float radius = sphere.w;
 
 	const float along = dot(toCentre, in_direction);
 
@@ -561,7 +563,7 @@ SceneHit TraceScene(float3 in_origin, float3 in_direction, float in_maxDistance,
 	result.model = 0;
 	result.instance = 0;
 
-	const int instanceCount = (int)counts.x;
+	const int instanceCount = (int)scene.counts.x;
 
 	for (int i = 0; i < instanceCount; ++i)
 	{
